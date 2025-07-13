@@ -1,4 +1,6 @@
 import winston from 'winston';
+import fs from 'fs';
+import path from 'path';
 
 // Environment context detection - now dynamic
 function getEnvironmentContext(): string {
@@ -32,66 +34,140 @@ function getEnvironmentContext(): string {
   }
 }
 
-const logFormat = winston.format.combine(
-  winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
-  winston.format.errors({ stack: true }),
-  winston.format.printf(({ level, message, timestamp, stack }) => {
-    // Get environment context dynamically for each log entry
-    const environmentContext = getEnvironmentContext();
-    return `${timestamp} ${environmentContext} [${level.toUpperCase()}]: ${stack || message}`;
-  })
-);
+// Get current trading symbol for log file naming
+function getCurrentSymbol(): string {
+  let symbol = process.env.TRADING_SYMBOL;
+  if (!symbol) {
+    try {
+      const config = require('../config/config');
+      symbol = config?.config?.symbol;
+    } catch {
+      // Fallback if config loading fails
+    }
+  }
+  return symbol || 'UNKNOWN';
+}
 
-export const logger = winston.createLogger({
-  level: process.env.LOG_LEVEL || 'info',
-  format: logFormat,
-  transports: [
-    new winston.transports.Console({
-      format: winston.format.combine(
-        winston.format.colorize(),
-        logFormat
-      )
-    }),
-    new winston.transports.File({
-      filename: 'logs/error.log',
-      level: 'error',
-      maxsize: 5242880, // 5MB
-      maxFiles: 5,
-    }),
-    new winston.transports.File({
-      filename: 'logs/trading.log',
-      maxsize: 5242880, // 5MB
-      maxFiles: 10,
-    }),
-  ],
-});
+// Ensure logs directory exists
+function ensureLogsDirectory(): void {
+  const logsDir = path.join(process.cwd(), 'logs');
+  if (!fs.existsSync(logsDir)) {
+    fs.mkdirSync(logsDir, { recursive: true });
+  }
+}
+
+// Create ticker-specific log file paths
+function getLogFilePaths(symbol?: string): { tradingLog: string; errorLog: string } {
+  ensureLogsDirectory();
+  const currentSymbol = symbol || getCurrentSymbol();
+  
+  // For tests, use generic names to avoid cluttering with many test files
+  const isTest = process.env.NODE_ENV === 'test' || 
+                 process.env.JEST_WORKER_ID !== undefined ||
+                 process.argv.some(arg => arg.includes('jest')) ||
+                 process.argv.some(arg => arg.includes('test'));
+  
+  if (isTest) {
+    return {
+      tradingLog: 'logs/trading-test.log',
+      errorLog: 'logs/error-test.log'
+    };
+  }
+  
+  return {
+    tradingLog: `logs/trading-${currentSymbol}.log`,
+    errorLog: `logs/error-${currentSymbol}.log`
+  };
+}
+
+// Cache for logger instances per symbol
+const loggerCache = new Map<string, winston.Logger>();
+
+// Create or get logger for specific symbol
+function getLoggerForSymbol(symbol?: string): winston.Logger {
+  const currentSymbol = symbol || getCurrentSymbol();
+  
+  // Return cached logger if exists
+  if (loggerCache.has(currentSymbol)) {
+    return loggerCache.get(currentSymbol)!;
+  }
+  
+  // Create new logger for this symbol
+  const logFilePaths = getLogFilePaths(currentSymbol);
+  
+  const logFormat = winston.format.combine(
+    winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
+    winston.format.errors({ stack: true }),
+    winston.format.printf(({ level, message, timestamp, stack }) => {
+      // Get environment context dynamically for each log entry
+      const environmentContext = getEnvironmentContext();
+      return `${timestamp} ${environmentContext} [${level.toUpperCase()}]: ${stack || message}`;
+    })
+  );
+  
+  const symbolLogger = winston.createLogger({
+    level: process.env.LOG_LEVEL || 'info',
+    format: logFormat,
+    transports: [
+      new winston.transports.Console({
+        format: winston.format.combine(
+          winston.format.colorize(),
+          logFormat
+        )
+      }),
+      new winston.transports.File({
+        filename: logFilePaths.errorLog,
+        level: 'error',
+        maxsize: 5242880, // 5MB
+        maxFiles: 5,
+      }),
+      new winston.transports.File({
+        filename: logFilePaths.tradingLog,
+        maxsize: 5242880, // 5MB
+        maxFiles: 10,
+      }),
+    ],
+  });
+  
+  // Cache the logger
+  loggerCache.set(currentSymbol, symbolLogger);
+  return symbolLogger;
+}
+
+// Default logger (backwards compatibility) - uses current symbol
+export const logger = getLoggerForSymbol();
 
 export class TradingLogger {
-  static logTrade(action: string, details: any): void {
+  static logTrade(action: string, details: any, symbol?: string): void {
     const environmentContext = getEnvironmentContext();
-    logger.info(`TRADE: ${action}`, { ...details, type: 'TRADE', environment: environmentContext });
+    const targetLogger = symbol ? getLoggerForSymbol(symbol) : logger;
+    targetLogger.info(`TRADE: ${action}`, { ...details, type: 'TRADE', environment: environmentContext });
   }
   
-  static logSignal(signal: any): void {
+  static logSignal(signal: any, symbol?: string): void {
     const environmentContext = getEnvironmentContext();
-    logger.info(`SIGNAL: ${signal.action}`, { ...signal, type: 'SIGNAL', environment: environmentContext });
+    const targetLogger = symbol ? getLoggerForSymbol(symbol) : logger;
+    targetLogger.info(`SIGNAL: ${signal.action}`, { ...signal, type: 'SIGNAL', environment: environmentContext });
   }
   
-  static logRisk(message: string, data: any): void {
+  static logRisk(message: string, data: any, symbol?: string): void {
     const environmentContext = getEnvironmentContext();
-    logger.warn(`RISK: ${message}`, { ...data, type: 'RISK', environment: environmentContext });
+    const targetLogger = symbol ? getLoggerForSymbol(symbol) : logger;
+    targetLogger.warn(`RISK: ${message}`, { ...data, type: 'RISK', environment: environmentContext });
   }
   
-  static logError(error: Error, context?: any): void {
+  static logError(error: Error, context?: any, symbol?: string): void {
     const environmentContext = getEnvironmentContext();
-    logger.error('ERROR', { error: error.message, stack: error.stack, context, type: 'ERROR', environment: environmentContext });
+    const targetLogger = symbol ? getLoggerForSymbol(symbol) : logger;
+    targetLogger.error('ERROR', { error: error.message, stack: error.stack, context, type: 'ERROR', environment: environmentContext });
   }
   
-  static logPerformance(metrics: any): void {
+  static logPerformance(metrics: any, symbol?: string): void {
     const environmentContext = getEnvironmentContext();
-    logger.info('PERFORMANCE', { ...metrics, type: 'PERFORMANCE', environment: environmentContext });
+    const targetLogger = symbol ? getLoggerForSymbol(symbol) : logger;
+    targetLogger.info('PERFORMANCE', { ...metrics, type: 'PERFORMANCE', environment: environmentContext });
   }
 }
 
 // Export environment context getter for use in other modules
-export { getEnvironmentContext };
+export { getEnvironmentContext, getLoggerForSymbol };

@@ -315,14 +315,21 @@ enterprise-solana-trading-bot/
 
 ### **Log File Locations**
 ```bash
-# Error logs
-tail -f logs/error.log
+# Ticker-specific logs (NEW - Recommended)
+tail -f logs/trading-BTCUSDT.log      # Bitcoin trading activity
+tail -f logs/trading-SOLUSDT.log      # Solana trading activity
+tail -f logs/error-BTCUSDT.log        # Bitcoin errors
 
-# Trading activity
-tail -f logs/trading.log
+# Test logs
+tail -f logs/trading-test.log         # All test activity
+tail -f logs/error-test.log           # Test errors
 
-# All activity
-tail -f logs/trading.log | grep -E "(TRADE|SIGNAL|RISK)"
+# Legacy logs (backwards compatibility)
+tail -f logs/error.log               # General errors
+tail -f logs/trading.log             # General trading activity
+
+# Filter specific activity
+tail -f logs/trading-BTCUSDT.log | grep -E "(TRADE|SIGNAL|RISK)"
 ```
 
 ---

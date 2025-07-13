@@ -263,8 +263,15 @@ npm run lint
 - **ERROR**: System errors and exceptions
 
 ### Log Files
-- `logs/trading.log`: Complete trading activity log
-- `logs/error.log`: Error-only log for debugging
+- **Ticker-Specific Logs** (NEW):
+  - `logs/trading-{SYMBOL}.log`: Trading activity for specific ticker (e.g., `trading-BTCUSDT.log`)
+  - `logs/error-{SYMBOL}.log`: Errors for specific ticker (e.g., `error-BTCUSDT.log`)
+- **Test Logs**:
+  - `logs/trading-test.log`: All test-related logs
+  - `logs/error-test.log`: Test error logs
+- **Legacy** (backwards compatibility):
+  - `logs/trading.log`: General trading activity
+  - `logs/error.log`: General error log
 
 ## 🚨 Emergency Procedures
 
