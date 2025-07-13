@@ -3,6 +3,71 @@ import { TradingConfig, BinanceCredentials } from '../interfaces/trading';
 import fs from 'fs';
 import path from 'path';
 
+// Trading profiles for different cryptocurrencies
+interface CoinProfile {
+  symbol: string;
+  volatility: 'low' | 'medium' | 'high';
+  meanReversionPeriod: number;
+  deviationThreshold: number;
+  stopLossPercentage: number;
+  takeProfitPercentage: number;
+  trailingStopPercentage: number;
+  positionSizePercentage: number;
+  maxOpenPositions: number;
+  description: string;
+}
+
+const coinProfiles: Record<string, CoinProfile> = {
+  'BTCUSDT': {
+    symbol: 'BTCUSDT',
+    volatility: 'low',
+    meanReversionPeriod: 14,
+    deviationThreshold: 1.5,
+    stopLossPercentage: 1.5,
+    takeProfitPercentage: 2.5,
+    trailingStopPercentage: 1.0,
+    positionSizePercentage: 15,
+    maxOpenPositions: 2,
+    description: 'Conservative settings for Bitcoin - lower volatility, institutional trading'
+  },
+  'SOLUSDT': {
+    symbol: 'SOLUSDT',
+    volatility: 'medium',
+    meanReversionPeriod: 20,
+    deviationThreshold: 2.0,
+    stopLossPercentage: 2.0,
+    takeProfitPercentage: 3.0,
+    trailingStopPercentage: 1.5,
+    positionSizePercentage: 10,
+    maxOpenPositions: 3,
+    description: 'Balanced settings for Solana - medium volatility, good mean reversion'
+  },
+  'ADAUSDT': {
+    symbol: 'ADAUSDT',
+    volatility: 'high',
+    meanReversionPeriod: 25,
+    deviationThreshold: 2.5,
+    stopLossPercentage: 2.5,
+    takeProfitPercentage: 4.0,
+    trailingStopPercentage: 2.0,
+    positionSizePercentage: 8,
+    maxOpenPositions: 4,
+    description: 'Higher volatility settings for Cardano - wider bands, more positions'
+  },
+  'XRPUSDT': {
+    symbol: 'XRPUSDT',
+    volatility: 'high',
+    meanReversionPeriod: 22,
+    deviationThreshold: 2.3,
+    stopLossPercentage: 2.2,
+    takeProfitPercentage: 3.5,
+    trailingStopPercentage: 1.8,
+    positionSizePercentage: 9,
+    maxOpenPositions: 4,
+    description: 'Aggressive settings for XRP - regulatory news volatility, quick reversions'
+  }
+};
+
 // Load environment variables with smart file detection
 function loadEnvironment() {
   // First load default .env to check if testnet is enabled
@@ -22,23 +87,46 @@ function loadEnvironment() {
   }
 }
 
+// Get coin profile or default values
+function getCoinProfile(symbol: string): CoinProfile {
+  const normalizedSymbol = symbol.toUpperCase();
+  const profile = coinProfiles[normalizedSymbol];
+  if (profile) {
+    console.log(`🎯 Loading ${symbol} profile: ${profile.description}`);
+    return profile;
+  } else {
+    console.log(`⚠️  No profile found for ${symbol}, using SOL defaults`);
+    // Fallback to SOL profile (guaranteed to exist)
+    const defaultProfile = coinProfiles['SOLUSDT'];
+    if (!defaultProfile) {
+      throw new Error('Default SOL profile not found');
+    }
+    return defaultProfile;
+  }
+}
+
 // Load the appropriate environment
 loadEnvironment();
 
+// Get trading symbol and load coin profile
+const tradingSymbol = process.env.TRADING_SYMBOL || 'SOLUSDT';
+const coinProfile = getCoinProfile(tradingSymbol);
+
 export const config: TradingConfig = {
-  symbol: process.env.TRADING_SYMBOL || 'SOLUSDT',
+  symbol: tradingSymbol,
   initialCapital: parseFloat(process.env.INITIAL_CAPITAL || '300'),
   dailyProfitTarget: parseFloat(process.env.DAILY_PROFIT_TARGET || '12'),
   maxDailyLoss: parseFloat(process.env.MAX_DAILY_LOSS || '30'),
-  positionSizePercentage: parseFloat(process.env.POSITION_SIZE_PERCENTAGE || '10'),
   
-  stopLossPercentage: parseFloat(process.env.STOP_LOSS_PERCENTAGE || '2'),
-  takeProfitPercentage: parseFloat(process.env.TAKE_PROFIT_PERCENTAGE || '3'),
-  trailingStopPercentage: parseFloat(process.env.TRAILING_STOP_PERCENTAGE || '1.5'),
-  maxOpenPositions: parseInt(process.env.MAX_OPEN_POSITIONS || '3'),
+  // Use coin profile values with environment overrides
+  positionSizePercentage: parseFloat(process.env.POSITION_SIZE_PERCENTAGE || coinProfile.positionSizePercentage.toString()),
+  stopLossPercentage: parseFloat(process.env.STOP_LOSS_PERCENTAGE || coinProfile.stopLossPercentage.toString()),
+  takeProfitPercentage: parseFloat(process.env.TAKE_PROFIT_PERCENTAGE || coinProfile.takeProfitPercentage.toString()),
+  trailingStopPercentage: parseFloat(process.env.TRAILING_STOP_PERCENTAGE || coinProfile.trailingStopPercentage.toString()),
+  maxOpenPositions: parseInt(process.env.MAX_OPEN_POSITIONS || coinProfile.maxOpenPositions.toString()),
   
-  meanReversionPeriod: parseInt(process.env.MEAN_REVERSION_PERIOD || '20'),
-  deviationThreshold: parseFloat(process.env.DEVIATION_THRESHOLD || '2'),
+  meanReversionPeriod: parseInt(process.env.MEAN_REVERSION_PERIOD || coinProfile.meanReversionPeriod.toString()),
+  deviationThreshold: parseFloat(process.env.DEVIATION_THRESHOLD || coinProfile.deviationThreshold.toString()),
   gridLevels: parseInt(process.env.GRID_LEVELS || '5'),
   gridSpacingPercentage: parseFloat(process.env.GRID_SPACING_PERCENTAGE || '0.5'),
 };
@@ -51,7 +139,8 @@ export const binanceConfig: BinanceCredentials = {
 
 // Display configuration summary
 console.log(`💰 Capital: $${config.initialCapital} | Target: $${config.dailyProfitTarget}/day | Max Loss: $${config.maxDailyLoss}/day`);
-console.log(`📊 Mode: ${binanceConfig.testnet ? 'TESTNET' : 'LIVE TRADING'} | Position Size: ${config.positionSizePercentage}% | Max Positions: ${config.maxOpenPositions}`);
+console.log(`📊 Mode: ${binanceConfig.testnet ? 'TESTNET' : 'LIVE TRADING'} | Coin: ${config.symbol} (${coinProfile.volatility} vol) | Position Size: ${config.positionSizePercentage}%`);
+console.log(`⚙️  Profile: Bollinger(${config.meanReversionPeriod}, ${config.deviationThreshold}) | Stop: ${config.stopLossPercentage}% | Take: ${config.takeProfitPercentage}%`);
 
 export const validateConfig = (): void => {
   if (!binanceConfig.apiKey || !binanceConfig.apiSecret) {
