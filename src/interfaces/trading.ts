@@ -14,6 +14,8 @@ export interface TradingConfig {
   deviationThreshold: number;
   gridLevels: number;
   gridSpacingPercentage: number;
+  
+  fearGreedIndexEnabled: boolean;
 }
 
 export interface MarketData {
@@ -24,6 +26,31 @@ export interface MarketData {
   change24h: number;
   high24h: number;
   low24h: number;
+  fearGreedIndex?: FearGreedData;
+}
+
+export interface FearGreedData {
+  value: number;
+  valueClassification: 'Extreme Fear' | 'Fear' | 'Neutral' | 'Greed' | 'Extreme Greed';
+  timestamp: number;
+  nextUpdate: number;
+  source: 'api' | 'scraper' | 'cached';
+}
+
+export interface FearGreedCacheEntry {
+  data: FearGreedData;
+  cachedAt: number;
+  expiresAt: number;
+}
+
+export interface FearGreedConfig {
+  enabled: boolean;
+  apiKey: string;
+  cacheExpiryHours: number;
+  retryAttempts: number;
+  retryDelayMs: number;
+  fallbackToScraper: boolean;
+  scrapingUrl: string;
 }
 
 export interface Position {

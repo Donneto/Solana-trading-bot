@@ -3,7 +3,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { BinanceService } from '../services/binance/binanceService';
 import { RiskManager } from '../services/risk/riskManager';
 import { MeanReversionStrategy } from '../strategies/meanReversion/meanReversionStrategy';
-import { Position, TradingSignal, MarketData, TradingConfig, Order } from '../interfaces/trading';
+import { Position, TradingSignal, MarketData, TradingConfig } from '../interfaces/trading';
 import { logger, TradingLogger } from '../utils/logger';
 
 export class TradingEngine extends EventEmitter {
@@ -123,7 +123,12 @@ export class TradingEngine extends EventEmitter {
       }
 
       // Get trading signal from strategy
-      const signal = this.strategy.analyzeMarket(marketData);
+      // Use async method if Fear and Greed Index is enabled for enhanced analysis
+      if (this.config.fearGreedIndexEnabled) {
+        await this.strategy.analyzeMarketAsync(marketData);
+      } else {
+        this.strategy.analyzeMarket(marketData);
+      }
       
       // Emit market data for UI
       this.emit('marketData', marketData);

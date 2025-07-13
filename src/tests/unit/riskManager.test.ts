@@ -19,7 +19,8 @@ describe('RiskManager', () => {
       meanReversionPeriod: 20,
       deviationThreshold: 2,
       gridLevels: 5,
-      gridSpacingPercentage: 0.5
+      gridSpacingPercentage: 0.5,
+      fearGreedIndexEnabled: false
     };
     
     riskManager = new RiskManager(mockConfig);

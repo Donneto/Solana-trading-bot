@@ -1,5 +1,5 @@
 import dotenv from 'dotenv';
-import { TradingConfig, BinanceCredentials } from '../interfaces/trading';
+import { TradingConfig, BinanceCredentials, FearGreedConfig } from '../interfaces/trading';
 import fs from 'fs';
 import path from 'path';
 
@@ -144,6 +144,8 @@ function createConfig(): TradingConfig {
     deviationThreshold: parseFloat(process.env.DEVIATION_THRESHOLD || coinProfile.deviationThreshold.toString()),
     gridLevels: parseInt(process.env.GRID_LEVELS || '5'),
     gridSpacingPercentage: parseFloat(process.env.GRID_SPACING_PERCENTAGE || '0.5'),
+    
+    fearGreedIndexEnabled: process.env.FEAR_GREED_INDEX_ENABLED === 'true',
   };
 }
 
@@ -154,6 +156,16 @@ export function getConfig(): TradingConfig {
 
 // Initialize with default config
 export let config = createConfig();
+
+export const fearGreedConfig: FearGreedConfig = {
+  enabled: process.env.FEAR_GREED_INDEX_ENABLED === 'true',
+  apiKey: process.env.COINMARKETCAP_API_KEY || '',
+  cacheExpiryHours: parseInt(process.env.FEAR_GREED_CACHE_HOURS || '12'),
+  retryAttempts: parseInt(process.env.FEAR_GREED_RETRY_ATTEMPTS || '3'),
+  retryDelayMs: parseInt(process.env.FEAR_GREED_RETRY_DELAY || '5000'),
+  fallbackToScraper: process.env.FEAR_GREED_FALLBACK_SCRAPER === 'true',
+  scrapingUrl: 'https://coinmarketcap.com/fear-and-greed/'
+};
 
 export const binanceConfig: BinanceCredentials = {
   apiKey: process.env.BINANCE_API_KEY || '',

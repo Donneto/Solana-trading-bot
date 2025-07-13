@@ -1,6 +1,7 @@
 import { EventEmitter } from 'events';
-import { TradingSignal, MarketData, TradingConfig } from '../../interfaces/trading';
+import { TradingSignal, MarketData, TradingConfig, FearGreedData } from '../../interfaces/trading';
 import { logger, TradingLogger } from '../../utils/logger';
+import { fearGreedService } from '../../services/fearGreed/fearGreedService';
 
 interface TechnicalIndicators {
   sma: number;
@@ -43,6 +44,31 @@ export class MeanReversionStrategy extends EventEmitter {
     }
 
     return signal;
+  }
+
+  async analyzeMarketAsync(marketData: MarketData): Promise<TradingSignal | null> {
+    await this.enrichMarketDataWithFearGreed(marketData);
+    return this.analyzeMarket(marketData);
+  }
+
+  private async enrichMarketDataWithFearGreed(marketData: MarketData): Promise<void> {
+    if (!this.config.fearGreedIndexEnabled) {
+      return;
+    }
+
+    try {
+      const fearGreedData = await fearGreedService.getFearGreedIndex();
+      if (fearGreedData) {
+        marketData.fearGreedIndex = fearGreedData;
+        logger.debug('Market data enriched with Fear and Greed Index', {
+          value: fearGreedData.value,
+          classification: fearGreedData.valueClassification,
+          source: fearGreedData.source
+        });
+      }
+    } catch (error) {
+      logger.warn('Failed to fetch Fear and Greed Index', { error: (error as Error).message });
+    }
   }
 
   private updateHistory(marketData: MarketData): void {
@@ -134,10 +160,10 @@ export class MeanReversionStrategy extends EventEmitter {
     if (this.shouldBuy(currentPrice, bollinger, rsi, marketData)) {
       signal = {
         action: 'BUY',
-        confidence: this.calculateConfidence(currentPrice, bollinger, rsi, 'BUY'),
+        confidence: this.calculateConfidence(currentPrice, bollinger, rsi, 'BUY', marketData.fearGreedIndex),
         price: currentPrice,
         quantity: baseQuantity,
-        reason: this.generateReason(currentPrice, bollinger, rsi, 'BUY'),
+        reason: this.generateReason(currentPrice, bollinger, rsi, 'BUY', marketData.fearGreedIndex),
         timestamp: currentTime,
         stopLoss: currentPrice * (1 - this.config.stopLossPercentage / 100),
         takeProfit: currentPrice * (1 + this.config.takeProfitPercentage / 100)
@@ -145,10 +171,10 @@ export class MeanReversionStrategy extends EventEmitter {
     } else if (this.shouldSell(currentPrice, bollinger, rsi, marketData)) {
       signal = {
         action: 'SELL',
-        confidence: this.calculateConfidence(currentPrice, bollinger, rsi, 'SELL'),
+        confidence: this.calculateConfidence(currentPrice, bollinger, rsi, 'SELL', marketData.fearGreedIndex),
         price: currentPrice,
         quantity: baseQuantity,
-        reason: this.generateReason(currentPrice, bollinger, rsi, 'SELL'),
+        reason: this.generateReason(currentPrice, bollinger, rsi, 'SELL', marketData.fearGreedIndex),
         timestamp: currentTime,
         stopLoss: currentPrice * (1 + this.config.stopLossPercentage / 100),
         takeProfit: currentPrice * (1 - this.config.takeProfitPercentage / 100)
@@ -186,7 +212,17 @@ export class MeanReversionStrategy extends EventEmitter {
     const downwardMomentum = recentPrices.length >= 3 && 
       firstPrice && lastPrice && lastPrice < firstPrice;
 
-    return belowLowerBand && (oversold || belowMean) && volumeConfirmation && !!downwardMomentum;
+    // Fear and Greed Index sentiment check
+    const fearGreedConfirmation = this.getFearGreedConfirmation(marketData.fearGreedIndex, 'BUY');
+
+    const technicalSignal = belowLowerBand && (oversold || belowMean) && volumeConfirmation && !!downwardMomentum;
+    
+    // If Fear and Greed Index is available, use it to filter signals
+    if (marketData.fearGreedIndex) {
+      return technicalSignal && fearGreedConfirmation;
+    }
+
+    return technicalSignal;
   }
 
   private shouldSell(price: number, bollinger: any, rsi: number, marketData: MarketData): boolean {
@@ -212,10 +248,57 @@ export class MeanReversionStrategy extends EventEmitter {
     const upwardMomentum = recentPrices.length >= 3 && 
       firstPrice && lastPrice && lastPrice > firstPrice;
 
-    return aboveUpperBand && (overbought || aboveMean) && volumeConfirmation && !!upwardMomentum;
+    // Fear and Greed Index sentiment check
+    const fearGreedConfirmation = this.getFearGreedConfirmation(marketData.fearGreedIndex, 'SELL');
+
+    const technicalSignal = aboveUpperBand && (overbought || aboveMean) && volumeConfirmation && !!upwardMomentum;
+    
+    // If Fear and Greed Index is available, use it to filter signals
+    if (marketData.fearGreedIndex) {
+      return technicalSignal && fearGreedConfirmation;
+    }
+
+    return technicalSignal;
   }
 
-  private calculateConfidence(price: number, bollinger: any, rsi: number, action: 'BUY' | 'SELL'): number {
+  private getFearGreedConfirmation(fearGreedData: FearGreedData | undefined, action: 'BUY' | 'SELL'): boolean {
+    if (!fearGreedData) return true; // No data means no filter
+
+    const { value, valueClassification } = fearGreedData;
+
+    if (action === 'BUY') {
+      // Buy signals are stronger during fear periods (mean reversion opportunity)
+      // Extreme Fear (0-25): Strong buy confirmation
+      // Fear (25-45): Good buy confirmation
+      // Neutral (45-55): Moderate confirmation
+      // Greed (55-75): Weak confirmation
+      // Extreme Greed (75-100): No confirmation (avoid buying during extreme greed)
+      
+      if (valueClassification === 'Extreme Fear') return true;
+      if (valueClassification === 'Fear') return true;
+      if (valueClassification === 'Neutral') return value <= 50; // Lower neutral range
+      if (valueClassification === 'Greed') return false; // Avoid buying during greed
+      if (valueClassification === 'Extreme Greed') return false; // Definitely avoid
+
+    } else if (action === 'SELL') {
+      // Sell signals are stronger during greed periods (mean reversion opportunity)
+      // Extreme Greed (75-100): Strong sell confirmation
+      // Greed (55-75): Good sell confirmation
+      // Neutral (45-55): Moderate confirmation
+      // Fear (25-45): Weak confirmation
+      // Extreme Fear (0-25): No confirmation (avoid selling during extreme fear)
+      
+      if (valueClassification === 'Extreme Greed') return true;
+      if (valueClassification === 'Greed') return true;
+      if (valueClassification === 'Neutral') return value >= 50; // Upper neutral range
+      if (valueClassification === 'Fear') return false; // Avoid selling during fear
+      if (valueClassification === 'Extreme Fear') return false; // Definitely avoid
+    }
+
+    return true; // Default to allowing signal
+  }
+
+  private calculateConfidence(price: number, bollinger: any, rsi: number, action: 'BUY' | 'SELL', fearGreedData?: FearGreedData): number {
     let confidence = 0;
     
     if (action === 'BUY') {
@@ -250,15 +333,72 @@ export class MeanReversionStrategy extends EventEmitter {
     const volatilityPenalty = Math.min(volatility / bollinger.middle * 50, 15);
     confidence -= volatilityPenalty;
     
+    // Fear and Greed Index confidence boost/penalty
+    if (fearGreedData) {
+      const fearGreedBoost = this.calculateFearGreedConfidenceAdjustment(fearGreedData, action);
+      confidence += fearGreedBoost;
+      
+      logger.debug('Fear and Greed Index confidence adjustment', {
+        action,
+        fearGreedValue: fearGreedData.value,
+        fearGreedClassification: fearGreedData.valueClassification,
+        confidenceAdjustment: fearGreedBoost,
+        source: fearGreedData.source
+      });
+    }
+    
     return Math.max(0, Math.min(100, confidence + 25)); // Base confidence of 25
   }
 
-  private generateReason(price: number, bollinger: any, rsi: number, action: 'BUY' | 'SELL'): string {
+  private calculateFearGreedConfidenceAdjustment(fearGreedData: FearGreedData, action: 'BUY' | 'SELL'): number {
+    const { value, valueClassification } = fearGreedData;
+    
     if (action === 'BUY') {
-      return `Mean reversion BUY: Price ${price.toFixed(2)} below lower band ${bollinger.lower.toFixed(2)}, RSI: ${rsi.toFixed(1)}`;
+      // More fear = higher confidence for buy signals (mean reversion)
+      switch (valueClassification) {
+        case 'Extreme Fear':
+          return 20; // Strong boost for buying during extreme fear
+        case 'Fear':
+          return 15; // Good boost for buying during fear
+        case 'Neutral':
+          return value <= 45 ? 5 : -5; // Small boost/penalty based on neutral range
+        case 'Greed':
+          return -10; // Penalty for buying during greed
+        case 'Extreme Greed':
+          return -20; // Strong penalty for buying during extreme greed
+        default:
+          return 0;
+      }
     } else {
-      return `Mean reversion SELL: Price ${price.toFixed(2)} above upper band ${bollinger.upper.toFixed(2)}, RSI: ${rsi.toFixed(1)}`;
+      // More greed = higher confidence for sell signals (mean reversion)
+      switch (valueClassification) {
+        case 'Extreme Greed':
+          return 20; // Strong boost for selling during extreme greed
+        case 'Greed':
+          return 15; // Good boost for selling during greed
+        case 'Neutral':
+          return value >= 55 ? 5 : -5; // Small boost/penalty based on neutral range
+        case 'Fear':
+          return -10; // Penalty for selling during fear
+        case 'Extreme Fear':
+          return -20; // Strong penalty for selling during extreme fear
+        default:
+          return 0;
+      }
     }
+  }
+
+  private generateReason(price: number, bollinger: any, rsi: number, action: 'BUY' | 'SELL', fearGreedData?: FearGreedData): string {
+    const baseReason = action === 'BUY' 
+      ? `Mean reversion BUY: Price ${price.toFixed(2)} below lower band ${bollinger.lower.toFixed(2)}, RSI: ${rsi.toFixed(1)}`
+      : `Mean reversion SELL: Price ${price.toFixed(2)} above upper band ${bollinger.upper.toFixed(2)}, RSI: ${rsi.toFixed(1)}`;
+
+    if (fearGreedData) {
+      const fearGreedSuffix = `, Fear & Greed: ${fearGreedData.value} (${fearGreedData.valueClassification})`;
+      return baseReason + fearGreedSuffix;
+    }
+
+    return baseReason;
   }
 
   private calculatePositionSize(price: number, volatility: number): number {

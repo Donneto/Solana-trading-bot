@@ -1,8 +1,10 @@
 import Binance from 'binance-api-node';
 import WebSocket from 'ws';
 import { EventEmitter } from 'events';
-import { BinanceCredentials, MarketData, Order } from '../../interfaces/trading';
+import { BinanceCredentials, MarketData } from '../../interfaces/trading';
 import { logger, TradingLogger } from '../../utils/logger';
+import { config } from '../../config/config';
+import { fearGreedService } from '../fearGreed/fearGreedService';
 
 export class BinanceService extends EventEmitter {
   private client: any;
@@ -272,7 +274,7 @@ export class BinanceService extends EventEmitter {
       
       // Try using the library's WebSocket first
       try {
-        const stream = this.marketDataClient.ws.ticker(symbol, (ticker: any) => {
+        const stream = this.marketDataClient.ws.ticker(symbol, async (ticker: any) => {
           const marketData: MarketData = {
             symbol: ticker.symbol,
             price: parseFloat(ticker.curDayClose),
@@ -282,6 +284,19 @@ export class BinanceService extends EventEmitter {
             high24h: parseFloat(ticker.high),
             low24h: parseFloat(ticker.low)
           };
+          
+          // Add Fear and Greed Index if enabled
+          if (config.fearGreedIndexEnabled) {
+            try {
+              const fearGreedData = await fearGreedService.getFearGreedIndex();
+              if (fearGreedData) {
+                marketData.fearGreedIndex = fearGreedData;
+              }
+            } catch (error) {
+              // Silently handle Fear and Greed Index errors to avoid disrupting market data
+              logger.debug('Failed to fetch Fear and Greed Index for market data', { error });
+            }
+          }
           
           this.emit('marketData', marketData);
         });
@@ -346,6 +361,19 @@ export class BinanceService extends EventEmitter {
           low24h: stats.low24h
         };
         
+        // Add Fear and Greed Index if enabled
+        if (config.fearGreedIndexEnabled) {
+          try {
+            const fearGreedData = await fearGreedService.getFearGreedIndex();
+            if (fearGreedData) {
+              marketData.fearGreedIndex = fearGreedData;
+            }
+          } catch (error) {
+            // Silently handle Fear and Greed Index errors to avoid disrupting market data
+            logger.debug('Failed to fetch Fear and Greed Index for polling data', { error });
+          }
+        }
+        
         this.emit('marketData', marketData);
       } catch (error) {
         TradingLogger.logError(error as Error, { context: 'BinanceService.pollingData' });
@@ -369,7 +397,7 @@ export class BinanceService extends EventEmitter {
         logger.info(`Live market data WebSocket connected for ${symbol}${this.credentials.testnet ? ' (testnet trading mode)' : ''}`);
       });
       
-      this.ws.on('message', (data: WebSocket.Data) => {
+      this.ws.on('message', async (data: WebSocket.Data) => {
         try {
           const ticker = JSON.parse(data.toString());
           const marketData: MarketData = {
@@ -381,6 +409,19 @@ export class BinanceService extends EventEmitter {
             high24h: parseFloat(ticker.h),
             low24h: parseFloat(ticker.l)
           };
+          
+          // Add Fear and Greed Index if enabled
+          if (config.fearGreedIndexEnabled) {
+            try {
+              const fearGreedData = await fearGreedService.getFearGreedIndex();
+              if (fearGreedData) {
+                marketData.fearGreedIndex = fearGreedData;
+              }
+            } catch (error) {
+              // Silently handle Fear and Greed Index errors to avoid disrupting market data
+              logger.debug('Failed to fetch Fear and Greed Index for WebSocket data', { error });
+            }
+          }
           
           this.emit('marketData', marketData);
         } catch (parseError) {

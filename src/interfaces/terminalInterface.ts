@@ -3,8 +3,8 @@ import inquirer from 'inquirer';
 import { TradingEngine } from '../services/tradingEngine';
 import { BinanceService } from '../services/binance/binanceService';
 import { config, binanceConfig } from '../config/config';
-import { logger } from '../utils/logger';
 import { MarketData, Position, RiskMetrics } from '../interfaces/trading';
+import { fearGreedService } from '../services/fearGreed/fearGreedService';
 
 export class TerminalInterface {
   private tradingEngine: TradingEngine;
@@ -124,7 +124,6 @@ export class TerminalInterface {
         // Immediate termination - no await, no async
         console.log('Goodbye!');
         process.exit(0);
-        break;
     }
   }
 
@@ -169,6 +168,7 @@ export class TerminalInterface {
       ['Take Profit', `${config.takeProfitPercentage}%`],
       ['Trailing Stop', `${config.trailingStopPercentage}%`],
       ['Max Positions', config.maxOpenPositions],
+      ['Fear & Greed Index', config.fearGreedIndexEnabled ? chalk.green('ENABLED') : chalk.gray('DISABLED')],
       ['Strategy', 'Mean Reversion + Live Market Data'],
       ['Risk Level', binanceConfig.testnet ? 'Safe (Fake Money)' : 'Real Money']
     ];
@@ -291,6 +291,24 @@ export class TerminalInterface {
     if (marketData) {
       console.log(`${chalk.blue('Current Price')}    : ${chalk.white('$' + marketData.price.toFixed(2))}`);
       console.log(`${chalk.blue('24h Change')}       : ${marketData.change24h >= 0 ? chalk.green('+' + marketData.change24h.toFixed(2) + '%') : chalk.red(marketData.change24h.toFixed(2) + '%')}`);
+      
+      // Display Fear and Greed Index if available
+      if (marketData.fearGreedIndex) {
+        const fgi = marketData.fearGreedIndex;
+        const fearGreedColor = this.getFearGreedColor(fgi.value);
+        const ageInfo = this.getFearGreedAge(fgi.timestamp);
+        console.log(`${chalk.blue('Fear & Greed')}     : ${fearGreedColor(fgi.value + ' - ' + fgi.valueClassification)} ${chalk.gray('(' + ageInfo + ')')}`);
+      } else if (config.fearGreedIndexEnabled) {
+        // Try to fetch if enabled but not present
+        this.fetchFearGreedIndex().then(fgiData => {
+          if (fgiData && marketData) {
+            marketData.fearGreedIndex = fgiData;
+          }
+        }).catch(() => {
+          // Silently handle error to avoid disrupting display
+        });
+        console.log(`${chalk.blue('Fear & Greed')}     : ${chalk.gray('Loading...')}`);
+      }
     }
 
     // Risk Metrics
@@ -341,7 +359,53 @@ export class TerminalInterface {
       console.log(`${chalk.gray('RSI')}              : ${chalk.white(strategyState.indicators.rsi.toFixed(1))}`);
     }
 
+    // Fear and Greed Service Health (only if enabled)
+    if (config.fearGreedIndexEnabled) {
+      const fgiHealth = fearGreedService.getHealthStatus();
+      console.log('\n' + chalk.blue('😱 Fear & Greed Index Service:'));
+      console.log(chalk.white('─'.repeat(40)));
+      console.log(`${chalk.gray('Status')}           : ${fgiHealth.hasValidCache ? chalk.green('ACTIVE') : chalk.yellow('WARMING UP')}`);
+      console.log(`${chalk.gray('Cache Age')}        : ${chalk.white(fgiHealth.cacheAge ? this.formatDuration(fgiHealth.cacheAge) : 'N/A')}`);
+      console.log(`${chalk.gray('Next Refresh')}     : ${chalk.white(fgiHealth.cacheExpiresIn ? this.formatDuration(fgiHealth.cacheExpiresIn) : 'Soon')}`);
+      if (fgiHealth.consecutiveFailures > 0) {
+        console.log(`${chalk.gray('Failures')}         : ${chalk.red(fgiHealth.consecutiveFailures)}`);
+      }
+    }
+
     console.log('\n' + chalk.gray('Press Ctrl+C to return to main menu'));
+  }
+
+  private async fetchFearGreedIndex() {
+    try {
+      return await fearGreedService.getFearGreedIndex();
+    } catch (error) {
+      return null;
+    }
+  }
+
+  private getFearGreedColor(value: number): (text: string) => string {
+    if (value <= 25) return chalk.red.bold;      // Extreme Fear - red
+    if (value <= 45) return chalk.red;           // Fear - red
+    if (value <= 55) return chalk.yellow;        // Neutral - yellow
+    if (value <= 75) return chalk.green;         // Greed - green
+    return chalk.green.bold;                     // Extreme Greed - bold green
+  }
+
+  private getFearGreedAge(timestamp: number): string {
+    const ageMs = Date.now() - timestamp;
+    return this.formatDuration(ageMs);
+  }
+
+  private formatDuration(ms: number): string {
+    const seconds = Math.floor(ms / 1000);
+    const minutes = Math.floor(seconds / 60);
+    const hours = Math.floor(minutes / 60);
+    const days = Math.floor(hours / 24);
+
+    if (days > 0) return `${days}d ${hours % 24}h ago`;
+    if (hours > 0) return `${hours}h ${minutes % 60}m ago`;
+    if (minutes > 0) return `${minutes}m ago`;
+    return `${seconds}s ago`;
   }
 
   private colorizeRiskScore(score: number): string {
