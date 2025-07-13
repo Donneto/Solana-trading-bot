@@ -108,28 +108,52 @@ function getCoinProfile(symbol: string): CoinProfile {
 // Load the appropriate environment
 loadEnvironment();
 
-// Get trading symbol and load coin profile
-const tradingSymbol = process.env.TRADING_SYMBOL || 'SOLUSDT';
-const coinProfile = getCoinProfile(tradingSymbol);
+// Get trading symbol - this will be set by command line or environment
+let tradingSymbol = process.env.TRADING_SYMBOL || 'SOLUSDT';
 
-export const config: TradingConfig = {
-  symbol: tradingSymbol,
-  initialCapital: parseFloat(process.env.INITIAL_CAPITAL || '300'),
-  dailyProfitTarget: parseFloat(process.env.DAILY_PROFIT_TARGET || '12'),
-  maxDailyLoss: parseFloat(process.env.MAX_DAILY_LOSS || '30'),
+// Function to set trading symbol from command line
+export function setTradingSymbol(symbol: string): void {
+  tradingSymbol = symbol;
+  // Update the config with new symbol
+  config = createConfig();
+}
+
+// Function to get current coin profile
+function getCurrentCoinProfile(): CoinProfile {
+  return getCoinProfile(tradingSymbol);
+}
+
+// Function to create configuration (called after symbol is potentially updated)
+function createConfig(): TradingConfig {
+  const coinProfile = getCurrentCoinProfile();
   
-  // Use coin profile values with environment overrides
-  positionSizePercentage: parseFloat(process.env.POSITION_SIZE_PERCENTAGE || coinProfile.positionSizePercentage.toString()),
-  stopLossPercentage: parseFloat(process.env.STOP_LOSS_PERCENTAGE || coinProfile.stopLossPercentage.toString()),
-  takeProfitPercentage: parseFloat(process.env.TAKE_PROFIT_PERCENTAGE || coinProfile.takeProfitPercentage.toString()),
-  trailingStopPercentage: parseFloat(process.env.TRAILING_STOP_PERCENTAGE || coinProfile.trailingStopPercentage.toString()),
-  maxOpenPositions: parseInt(process.env.MAX_OPEN_POSITIONS || coinProfile.maxOpenPositions.toString()),
-  
-  meanReversionPeriod: parseInt(process.env.MEAN_REVERSION_PERIOD || coinProfile.meanReversionPeriod.toString()),
-  deviationThreshold: parseFloat(process.env.DEVIATION_THRESHOLD || coinProfile.deviationThreshold.toString()),
-  gridLevels: parseInt(process.env.GRID_LEVELS || '5'),
-  gridSpacingPercentage: parseFloat(process.env.GRID_SPACING_PERCENTAGE || '0.5'),
-};
+  return {
+    symbol: tradingSymbol,
+    initialCapital: parseFloat(process.env.INITIAL_CAPITAL || '300'),
+    dailyProfitTarget: parseFloat(process.env.DAILY_PROFIT_TARGET || '12'),
+    maxDailyLoss: parseFloat(process.env.MAX_DAILY_LOSS || '30'),
+    
+    // Use coin profile values with environment overrides
+    positionSizePercentage: parseFloat(process.env.POSITION_SIZE_PERCENTAGE || coinProfile.positionSizePercentage.toString()),
+    stopLossPercentage: parseFloat(process.env.STOP_LOSS_PERCENTAGE || coinProfile.stopLossPercentage.toString()),
+    takeProfitPercentage: parseFloat(process.env.TAKE_PROFIT_PERCENTAGE || coinProfile.takeProfitPercentage.toString()),
+    trailingStopPercentage: parseFloat(process.env.TRAILING_STOP_PERCENTAGE || coinProfile.trailingStopPercentage.toString()),
+    maxOpenPositions: parseInt(process.env.MAX_OPEN_POSITIONS || coinProfile.maxOpenPositions.toString()),
+    
+    meanReversionPeriod: parseInt(process.env.MEAN_REVERSION_PERIOD || coinProfile.meanReversionPeriod.toString()),
+    deviationThreshold: parseFloat(process.env.DEVIATION_THRESHOLD || coinProfile.deviationThreshold.toString()),
+    gridLevels: parseInt(process.env.GRID_LEVELS || '5'),
+    gridSpacingPercentage: parseFloat(process.env.GRID_SPACING_PERCENTAGE || '0.5'),
+  };
+}
+
+// Get config function that returns current configuration
+export function getConfig(): TradingConfig {
+  return createConfig();
+}
+
+// Initialize with default config
+export let config = createConfig();
 
 export const binanceConfig: BinanceCredentials = {
   apiKey: process.env.BINANCE_API_KEY || '',
@@ -138,28 +162,38 @@ export const binanceConfig: BinanceCredentials = {
 };
 
 // Display configuration summary
-console.log(`💰 Capital: $${config.initialCapital} | Target: $${config.dailyProfitTarget}/day | Max Loss: $${config.maxDailyLoss}/day`);
-console.log(`📊 Mode: ${binanceConfig.testnet ? 'TESTNET' : 'LIVE TRADING'} | Coin: ${config.symbol} (${coinProfile.volatility} vol) | Position Size: ${config.positionSizePercentage}%`);
-console.log(`⚙️  Profile: Bollinger(${config.meanReversionPeriod}, ${config.deviationThreshold}) | Stop: ${config.stopLossPercentage}% | Take: ${config.takeProfitPercentage}%`);
+function displayConfigSummary(): void {
+  const currentConfig = getConfig();
+  const coinProfile = getCurrentCoinProfile();
+  
+  console.log(`💰 Capital: $${currentConfig.initialCapital} | Target: $${currentConfig.dailyProfitTarget}/day | Max Loss: $${currentConfig.maxDailyLoss}/day`);
+  console.log(`📊 Mode: ${binanceConfig.testnet ? 'TESTNET' : 'LIVE TRADING'} | Coin: ${currentConfig.symbol} (${coinProfile.volatility} vol) | Position Size: ${currentConfig.positionSizePercentage}%`);
+  console.log(`⚙️  Profile: Bollinger(${currentConfig.meanReversionPeriod}, ${currentConfig.deviationThreshold}) | Stop: ${currentConfig.stopLossPercentage}% | Take: ${currentConfig.takeProfitPercentage}%`);
+}
 
 export const validateConfig = (): void => {
+  const currentConfig = getConfig();
+  
   if (!binanceConfig.apiKey || !binanceConfig.apiSecret) {
     throw new Error('Binance API credentials are required');
   }
   
-  if (config.initialCapital <= 0) {
+  if (currentConfig.initialCapital <= 0) {
     throw new Error('Initial capital must be greater than 0');
   }
   
-  if (config.dailyProfitTarget <= 0) {
+  if (currentConfig.dailyProfitTarget <= 0) {
     throw new Error('Daily profit target must be greater than 0');
   }
   
-  if (config.stopLossPercentage <= 0 || config.stopLossPercentage >= 100) {
+  if (currentConfig.stopLossPercentage <= 0 || currentConfig.stopLossPercentage >= 100) {
     throw new Error('Stop loss percentage must be between 0 and 100');
   }
   
-  if (config.takeProfitPercentage <= 0 || config.takeProfitPercentage >= 100) {
+  if (currentConfig.takeProfitPercentage <= 0 || currentConfig.takeProfitPercentage >= 100) {
     throw new Error('Take profit percentage must be between 0 and 100');
   }
+  
+  // Display configuration after validation
+  displayConfigSummary();
 };
