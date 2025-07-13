@@ -71,9 +71,14 @@ export class TerminalInterface {
   }
 
   private displayBanner(): void {
+    const envStatus = binanceConfig.testnet ? '🧪 TESTNET' : '🚀 LIVE TRADING';
+    const ticker = config.symbol;
+    const statusLine = `${envStatus} | Trading: ${ticker}`;
+    
     console.log(chalk.cyan('╔══════════════════════════════════════════════════════════════╗'));
-    console.log(chalk.cyan('║') + chalk.yellow.bold('              ENTERPRISE SOLANA TRADING BOT                  ') + chalk.cyan('║'));
+    console.log(chalk.cyan('║') + chalk.yellow.bold('              ENTERPRISE CRYPTO TRADING BOT                  ') + chalk.cyan('║'));
     console.log(chalk.cyan('║') + chalk.white('                  Mean Reversion Strategy                     ') + chalk.cyan('║'));
+    console.log(chalk.cyan('║') + chalk.white(statusLine.padStart(Math.floor((62 + statusLine.length) / 2)).padEnd(62)) + chalk.cyan('║'));
     console.log(chalk.cyan('╚══════════════════════════════════════════════════════════════╝'));
     console.log();
   }
@@ -227,7 +232,11 @@ export class TerminalInterface {
   private async startLiveMonitor(): Promise<void> {
     this.isDisplaying = true;
     
+    const envStatus = binanceConfig.testnet ? chalk.yellow('🧪 TESTNET') : chalk.red('🚀 LIVE');
+    const ticker = chalk.cyan(config.symbol);
+    
     console.log(chalk.blue('\n🎯 Live Trading Monitor'));
+    console.log(`${envStatus} | Trading: ${ticker}`);
     console.log(chalk.gray('Press Ctrl+C to return to main menu\n'));
 
     this.refreshInterval = setInterval(() => {
@@ -261,7 +270,12 @@ export class TerminalInterface {
     // Clear previous display
     process.stdout.write('\x1B[2J\x1B[0f');
     
+    // Header with ticker and environment
+    const envStatus = binanceConfig.testnet ? chalk.yellow('🧪 TESTNET') : chalk.red('🚀 LIVE');
+    const ticker = chalk.cyan(config.symbol);
+    
     console.log(chalk.blue('🎯 Live Trading Monitor') + chalk.gray(` - ${new Date().toLocaleTimeString()}`));
+    console.log(`${envStatus} | Trading: ${ticker} | ${chalk.gray('Press Ctrl+C to exit')}`);
     console.log(chalk.white('═'.repeat(80)));
 
     // Engine Status
