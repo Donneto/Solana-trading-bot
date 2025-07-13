@@ -1,7 +1,29 @@
 import dotenv from 'dotenv';
 import { TradingConfig, BinanceCredentials } from '../interfaces/trading';
+import fs from 'fs';
+import path from 'path';
 
-dotenv.config();
+// Load environment variables with smart file detection
+function loadEnvironment() {
+  // First load default .env to check if testnet is enabled
+  dotenv.config();
+  
+  // If testnet is enabled, try to load testnet.env
+  if (process.env.BINANCE_TESTNET === 'true') {
+    const testnetEnvPath = path.join(process.cwd(), 'testnet.env');
+    if (fs.existsSync(testnetEnvPath)) {
+      console.log('🧪 Loading testnet configuration from testnet.env');
+      dotenv.config({ path: testnetEnvPath, override: true });
+    } else {
+      console.log('⚠️  testnet.env not found, using .env with testnet=true');
+    }
+  } else {
+    console.log('🚀 Loading live trading configuration from .env');
+  }
+}
+
+// Load the appropriate environment
+loadEnvironment();
 
 export const config: TradingConfig = {
   symbol: process.env.TRADING_SYMBOL || 'SOLUSDT',
@@ -26,6 +48,10 @@ export const binanceConfig: BinanceCredentials = {
   apiSecret: process.env.BINANCE_API_SECRET || '',
   testnet: process.env.BINANCE_TESTNET === 'true',
 };
+
+// Display configuration summary
+console.log(`💰 Capital: $${config.initialCapital} | Target: $${config.dailyProfitTarget}/day | Max Loss: $${config.maxDailyLoss}/day`);
+console.log(`📊 Mode: ${binanceConfig.testnet ? 'TESTNET' : 'LIVE TRADING'} | Position Size: ${config.positionSizePercentage}% | Max Positions: ${config.maxOpenPositions}`);
 
 export const validateConfig = (): void => {
   if (!binanceConfig.apiKey || !binanceConfig.apiSecret) {

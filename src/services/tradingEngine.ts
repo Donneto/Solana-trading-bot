@@ -176,6 +176,20 @@ export class TradingEngine extends EventEmitter {
       // Only execute BUY and SELL signals
       if (signal.action === 'HOLD') return;
 
+      // Additional validation before trade execution
+      const currentBalance = await this.binanceService.getAccountBalance('USDT');
+      const positionValue = signal.quantity * signal.price;
+      
+      // Safety check: ensure we have sufficient balance
+      if (positionValue > currentBalance * 0.95) {
+        logger.warn('Insufficient balance for trade', {
+          positionValue,
+          currentBalance,
+          signal: signal.action
+        });
+        return;
+      }
+
       // Place market order
       const marketOrder = await this.binanceService.placeMarketOrder(
         this.config.symbol,
@@ -186,6 +200,19 @@ export class TradingEngine extends EventEmitter {
       if (marketOrder.status === 'FILLED') {
         const fillPrice = parseFloat(marketOrder.fills[0].price);
         const fillQuantity = parseFloat(marketOrder.executedQty);
+        
+        // Validate fill price isn't too far from expected (slippage protection)
+        const expectedPrice = signal.price;
+        const slippage = Math.abs((fillPrice - expectedPrice) / expectedPrice) * 100;
+        
+        if (slippage > 1.0) { // 1% max acceptable slippage
+          logger.warn('High slippage detected', {
+            expectedPrice,
+            fillPrice,
+            slippage: slippage.toFixed(2) + '%',
+            orderId: marketOrder.orderId
+          });
+        }
 
         // Create position
         const position: Position = {

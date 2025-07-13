@@ -271,11 +271,15 @@ export class MeanReversionStrategy extends EventEmitter {
     // Calculate quantity based on current price and adjusted size
     const adjustedSize = baseSize * volatilityAdjustment;
     
-    // Assuming $300 initial capital from config
+    // Use initial capital as baseline (current balance should be passed from trading engine)
     const capital = this.config.initialCapital;
     const positionValue = capital * adjustedSize;
     
-    return parseFloat((positionValue / price).toFixed(6));
+    // Ensure minimum order value (Binance requires ~$10 minimum)
+    const minOrderValue = 10;
+    const calculatedValue = Math.max(minOrderValue, positionValue);
+    
+    return parseFloat((calculatedValue / price).toFixed(6));
   }
 
   getStrategyState() {

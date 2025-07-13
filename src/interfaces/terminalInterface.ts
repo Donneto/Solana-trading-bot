@@ -49,6 +49,12 @@ export class TerminalInterface {
   }
 
   async start(): Promise<void> {
+    // Add simple Ctrl+C handler for immediate exit
+    process.on('SIGINT', () => {
+      console.log('\n\nGoodbye!');
+      process.exit(0);
+    });
+
     this.clearScreen();
     this.displayBanner();
     
@@ -110,6 +116,8 @@ export class TerminalInterface {
         await this.emergencyStop();
         break;
       case 'Exit':
+        // Immediate termination - no await, no async
+        console.log('Goodbye!');
         process.exit(0);
         break;
     }
@@ -146,8 +154,9 @@ export class TerminalInterface {
     console.log(chalk.white('━'.repeat(50)));
     
     const configs = [
+      ['Environment', binanceConfig.testnet ? chalk.yellow('🧪 TESTNET') : chalk.red('🚀 LIVE TRADING')],
       ['Symbol', config.symbol],
-      ['Initial Capital', `$${config.initialCapital}`],
+      ['Initial Capital', `$${config.initialCapital.toLocaleString()}`],
       ['Daily Profit Target', `$${config.dailyProfitTarget}`],
       ['Max Daily Loss', `$${config.maxDailyLoss}`],
       ['Position Size', `${config.positionSizePercentage}%`],
@@ -155,8 +164,8 @@ export class TerminalInterface {
       ['Take Profit', `${config.takeProfitPercentage}%`],
       ['Trailing Stop', `${config.trailingStopPercentage}%`],
       ['Max Positions', config.maxOpenPositions],
-      ['Strategy', 'Mean Reversion'],
-      ['API Mode', binanceConfig.testnet ? 'TESTNET' : 'LIVE']
+      ['Strategy', 'Mean Reversion + Live Market Data'],
+      ['Risk Level', binanceConfig.testnet ? 'Safe (Fake Money)' : 'Real Money']
     ];
 
     configs.forEach(([key, value]) => {
@@ -227,11 +236,15 @@ export class TerminalInterface {
       }
     }, 1000);
 
-    // Handle Ctrl+C
-    process.on('SIGINT', async () => {
+    // Handle Ctrl+C - simple and clean
+    const handleExit = () => {
       this.stopLiveMonitor();
-      await this.showMainMenu();
-    });
+      process.removeAllListeners('SIGINT');
+      console.log(chalk.yellow('\n\nReturning to main menu...'));
+      setTimeout(() => this.showMainMenu(), 100);
+    };
+    
+    process.on('SIGINT', handleExit);
   }
 
   private stopLiveMonitor(): void {

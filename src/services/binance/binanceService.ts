@@ -6,7 +6,8 @@ import { logger, TradingLogger } from '../../utils/logger';
 
 export class BinanceService extends EventEmitter {
   private client: any;
-  private ws: WebSocket | null = null;
+  private marketDataClient: any; // For live market data even in testnet
+  private ws: WebSocket | NodeJS.Timeout | null = null;
   private credentials: BinanceCredentials;
   private isConnected: boolean = false;
   private reconnectAttempts: number = 0;
@@ -21,6 +22,7 @@ export class BinanceService extends EventEmitter {
 
   private initializeClient(): void {
     try {
+      // Trading client (respects testnet setting)
       this.client = Binance({
         apiKey: this.credentials.apiKey,
         apiSecret: this.credentials.apiSecret,
@@ -29,7 +31,15 @@ export class BinanceService extends EventEmitter {
           wsBase: 'wss://testnet.binance.vision'
         })
       });
-      logger.info('Binance client initialized successfully');
+
+      // Market data client (always live for real-time price feeds)
+      this.marketDataClient = Binance({
+        apiKey: this.credentials.apiKey,
+        apiSecret: this.credentials.apiSecret
+        // No testnet override - always use live market data
+      });
+
+      logger.info(`Binance clients initialized - Trading: ${this.credentials.testnet ? 'TESTNET' : 'LIVE'}, Market Data: LIVE`);
     } catch (error) {
       TradingLogger.logError(error as Error, { context: 'BinanceService.initializeClient' });
       throw new Error('Failed to initialize Binance client');
@@ -114,12 +124,41 @@ export class BinanceService extends EventEmitter {
 
   async placeMarketOrder(symbol: string, side: 'BUY' | 'SELL', quantity: number): Promise<any> {
     try {
+      // Validate order parameters
+      const orderValue = quantity * (await this.getCurrentPrice(symbol));
+      const minOrderValue = 10; // Binance minimum order value
+      
+      if (orderValue < minOrderValue) {
+        throw new Error(`Order value ${orderValue.toFixed(2)} below minimum ${minOrderValue}`);
+      }
+      
+      if (quantity <= 0) {
+        throw new Error(`Invalid quantity: ${quantity}`);
+      }
+
       const order = await this.client.order({
         symbol,
         side,
         type: 'MARKET',
         quantity: quantity.toFixed(6)
       });
+      
+      // Check for slippage if price data available
+      if (order.fills && order.fills.length > 0) {
+        const avgFillPrice = order.fills.reduce((sum: number, fill: any) => 
+          sum + (parseFloat(fill.price) * parseFloat(fill.qty)), 0) / parseFloat(order.executedQty);
+        
+        // Log execution details for monitoring
+        TradingLogger.logTrade('MARKET_ORDER_FILLED', {
+          orderId: order.orderId,
+          symbol,
+          side,
+          requestedQty: quantity,
+          executedQty: parseFloat(order.executedQty),
+          avgFillPrice,
+          status: order.status
+        });
+      }
       
       TradingLogger.logTrade('MARKET_ORDER_PLACED', {
         orderId: order.orderId,
@@ -225,40 +264,144 @@ export class BinanceService extends EventEmitter {
 
   startRealTimeData(symbol: string): void {
     try {
-      const stream = this.client.ws.ticker(symbol, (ticker: any) => {
-        const marketData: MarketData = {
-          symbol: ticker.symbol,
-          price: parseFloat(ticker.curDayClose),
-          timestamp: Date.now(),
-          volume: parseFloat(ticker.volume),
-          change24h: parseFloat(ticker.priceChangePercent),
-          high24h: parseFloat(ticker.high),
-          low24h: parseFloat(ticker.low)
-        };
-        
-        this.emit('marketData', marketData);
-      });
+      // HYBRID APPROACH: Use live WebSocket for price data even in testnet mode
+      // This gives us real-time market data for better RSI/Bollinger calculations
+      // while still using testnet for actual order execution
+      
+      logger.info(`Starting real-time data stream for ${symbol}${this.credentials.testnet ? ' (testnet trading with live market data)' : ''}`);
+      
+      // Try using the library's WebSocket first
+      try {
+        const stream = this.marketDataClient.ws.ticker(symbol, (ticker: any) => {
+          const marketData: MarketData = {
+            symbol: ticker.symbol,
+            price: parseFloat(ticker.curDayClose),
+            timestamp: Date.now(),
+            volume: parseFloat(ticker.volume),
+            change24h: parseFloat(ticker.priceChangePercent),
+            high24h: parseFloat(ticker.high),
+            low24h: parseFloat(ticker.low)
+          };
+          
+          this.emit('marketData', marketData);
+        });
 
-      stream.on('open', () => {
-        this.isConnected = true;
-        this.reconnectAttempts = 0;
-        logger.info(`Real-time data stream started for ${symbol}`);
-      });
+        // Check if stream has event methods
+        if (stream && typeof stream.on === 'function') {
+          stream.on('open', () => {
+            this.isConnected = true;
+            this.reconnectAttempts = 0;
+            logger.info(`Real-time data stream started for ${symbol}`);
+          });
 
-      stream.on('close', () => {
-        this.isConnected = false;
-        logger.warn(`Real-time data stream closed for ${symbol}`);
-        this.handleReconnection(symbol);
-      });
+          stream.on('close', () => {
+            this.isConnected = false;
+            logger.warn(`Real-time data stream closed for ${symbol}`);
+            this.handleReconnection(symbol);
+          });
 
-      stream.on('error', (error: Error) => {
-        TradingLogger.logError(error, { context: 'BinanceService.realTimeStream' });
-        this.handleReconnection(symbol);
-      });
+          stream.on('error', (error: Error) => {
+            TradingLogger.logError(error, { context: 'BinanceService.realTimeStream' });
+            this.handleReconnection(symbol);
+          });
+        } else {
+          // Fallback to manual WebSocket
+          this.startManualWebSocket(symbol);
+        }
+
+      } catch (wsError) {
+        logger.warn('Library WebSocket failed, using manual connection');
+        this.startManualWebSocket(symbol);
+      }
 
     } catch (error) {
       TradingLogger.logError(error as Error, { context: 'BinanceService.startRealTimeData' });
-      throw new Error('Failed to start real-time data stream');
+      
+      // Final fallback to polling only if WebSocket completely fails
+      if (this.credentials.testnet) {
+        logger.warn('WebSocket failed, falling back to polling for testnet');
+        this.startPollingData(symbol);
+      } else {
+        throw new Error('Failed to start real-time data stream');
+      }
+    }
+  }
+
+  private startPollingData(symbol: string): void {
+    logger.info(`Starting polling data for ${symbol} (testnet mode)`);
+    this.isConnected = true;
+    
+    const pollInterval = setInterval(async () => {
+      try {
+        const price = await this.getCurrentPrice(symbol);
+        const stats = await this.get24hrStats(symbol);
+        
+        const marketData: MarketData = {
+          symbol: symbol,
+          price: price,
+          timestamp: Date.now(),
+          volume: stats.volume,
+          change24h: stats.change24h,
+          high24h: stats.high24h,
+          low24h: stats.low24h
+        };
+        
+        this.emit('marketData', marketData);
+      } catch (error) {
+        TradingLogger.logError(error as Error, { context: 'BinanceService.pollingData' });
+      }
+    }, 2000); // Poll every 2 seconds for testnet
+    
+    // Store interval for cleanup
+    this.ws = pollInterval as any;
+  }
+
+  private startManualWebSocket(symbol: string): void {
+    try {
+      // Always use live WebSocket for market data (even in testnet trading mode)
+      const wsUrl = `wss://stream.binance.com:9443/ws/${symbol.toLowerCase()}@ticker`;
+      
+      this.ws = new WebSocket(wsUrl);
+      
+      this.ws.on('open', () => {
+        this.isConnected = true;
+        this.reconnectAttempts = 0;
+        logger.info(`Live market data WebSocket connected for ${symbol}${this.credentials.testnet ? ' (testnet trading mode)' : ''}`);
+      });
+      
+      this.ws.on('message', (data: WebSocket.Data) => {
+        try {
+          const ticker = JSON.parse(data.toString());
+          const marketData: MarketData = {
+            symbol: ticker.s,
+            price: parseFloat(ticker.c),
+            timestamp: Date.now(),
+            volume: parseFloat(ticker.v),
+            change24h: parseFloat(ticker.P),
+            high24h: parseFloat(ticker.h),
+            low24h: parseFloat(ticker.l)
+          };
+          
+          this.emit('marketData', marketData);
+        } catch (parseError) {
+          TradingLogger.logError(parseError as Error, { context: 'WebSocket.parseMessage' });
+        }
+      });
+      
+      this.ws.on('close', () => {
+        this.isConnected = false;
+        logger.warn(`Live market data WebSocket closed for ${symbol}`);
+        this.handleReconnection(symbol);
+      });
+      
+      this.ws.on('error', (error: Error) => {
+        TradingLogger.logError(error, { context: 'BinanceService.liveMarketDataWebSocket' });
+        this.handleReconnection(symbol);
+      });
+      
+    } catch (error) {
+      TradingLogger.logError(error as Error, { context: 'BinanceService.startManualWebSocket' });
+      throw new Error('Failed to start live market data WebSocket connection');
     }
   }
 
@@ -282,7 +425,13 @@ export class BinanceService extends EventEmitter {
 
   disconnect(): void {
     if (this.ws) {
-      this.ws.close();
+      if (typeof this.ws.close === 'function') {
+        // It's a WebSocket
+        this.ws.close();
+      } else {
+        // It's a polling interval
+        clearInterval(this.ws as any);
+      }
       this.ws = null;
     }
     this.isConnected = false;
