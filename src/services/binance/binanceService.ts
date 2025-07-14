@@ -1,10 +1,11 @@
 import Binance from 'binance-api-node';
 import WebSocket from 'ws';
 import { EventEmitter } from 'events';
-import { BinanceCredentials, MarketData } from '../../interfaces/trading';
+import { BinanceCredentials, MarketData, OrderBook, OrderBookAnalysis, VolumeAnalysis } from '../../interfaces/trading';
 import { logger, TradingLogger } from '../../utils/logger';
 import { config } from '../../config/config';
 import { fearGreedService } from '../fearGreed/fearGreedService';
+import { OrderBookService } from '../orderBook/orderBookService';
 
 export class BinanceService extends EventEmitter {
   private client: any;
@@ -15,6 +16,8 @@ export class BinanceService extends EventEmitter {
   private reconnectAttempts: number = 0;
   private maxReconnectAttempts: number = 5;
   private reconnectDelay: number = 5000;
+  private orderBookService: OrderBookService | null = null;
+  private currentMarketData: MarketData | null = null;
 
   constructor(credentials: BinanceCredentials) {
     super();
@@ -264,6 +267,49 @@ export class BinanceService extends EventEmitter {
     }
   }
 
+  private async initializeOrderBookService(symbol: string): Promise<void> {
+    try {
+      if (this.orderBookService) {
+        await this.orderBookService.disconnect();
+      }
+      
+      this.orderBookService = new OrderBookService(symbol);
+      
+      // Set up event listeners for order book updates
+      this.orderBookService.on('orderBookUpdate', (orderBook: OrderBook) => {
+        // Update current market data with latest order book
+        if (this.currentMarketData) {
+          this.currentMarketData.orderBook = orderBook;
+        }
+      });
+      
+      this.orderBookService.on('orderBookAnalysis', (analysis: OrderBookAnalysis) => {
+        // Update current market data with latest analysis
+        if (this.currentMarketData) {
+          this.currentMarketData.orderBookAnalysis = analysis;
+        }
+        // Emit for strategy use
+        this.emit('orderBookAnalysis', analysis);
+      });
+      
+      this.orderBookService.on('volumeAnalysis', (volumeAnalysis: VolumeAnalysis) => {
+        // Update current market data with latest volume analysis
+        if (this.currentMarketData) {
+          this.currentMarketData.volumeAnalysis = volumeAnalysis;
+        }
+        // Emit for strategy use
+        this.emit('volumeAnalysis', volumeAnalysis);
+      });
+      
+      // Connect to order book streams
+      await this.orderBookService.connect();
+      logger.info(`Order book service initialized for ${symbol}`);
+      
+    } catch (error) {
+      logger.error('Failed to initialize order book service', { error, symbol });
+    }
+  }
+
   startRealTimeData(symbol: string): void {
     try {
       // HYBRID APPROACH: Use live WebSocket for price data even in testnet mode
@@ -271,6 +317,9 @@ export class BinanceService extends EventEmitter {
       // while still using testnet for actual order execution
       
       logger.info(`Starting real-time data stream for ${symbol}${this.credentials.testnet ? ' (testnet trading with live market data)' : ''}`);
+      
+      // Initialize order book service for enhanced market analysis
+      this.initializeOrderBookService(symbol);
       
       // Try using the library's WebSocket first
       try {
@@ -298,6 +347,18 @@ export class BinanceService extends EventEmitter {
             }
           }
           
+          // Add order book data if available
+          if (this.orderBookService) {
+            const orderBook = this.orderBookService.getCurrentOrderBook();
+            const orderBookAnalysis = this.orderBookService.getCurrentAnalysis();
+            const volumeAnalysis = this.orderBookService.getCurrentVolumeAnalysis();
+            
+            if (orderBook) marketData.orderBook = orderBook;
+            if (orderBookAnalysis) marketData.orderBookAnalysis = orderBookAnalysis;
+            if (volumeAnalysis) marketData.volumeAnalysis = volumeAnalysis;
+          }
+          
+          this.currentMarketData = marketData;
           this.emit('marketData', marketData);
         });
 
@@ -475,7 +536,31 @@ export class BinanceService extends EventEmitter {
       }
       this.ws = null;
     }
+    
+    // Disconnect order book service
+    if (this.orderBookService) {
+      this.orderBookService.disconnect();
+      this.orderBookService = null;
+    }
+    
     this.isConnected = false;
     logger.info('Binance service disconnected');
+  }
+
+  // Order book data access methods
+  getCurrentOrderBook(): OrderBook | null {
+    return this.orderBookService?.getCurrentOrderBook() || null;
+  }
+
+  getCurrentOrderBookAnalysis(): OrderBookAnalysis | null {
+    return this.orderBookService?.getCurrentAnalysis() || null;
+  }
+
+  getCurrentVolumeAnalysis(): VolumeAnalysis | null {
+    return this.orderBookService?.getCurrentVolumeAnalysis() || null;
+  }
+
+  isOrderBookConnected(): boolean {
+    return this.orderBookService?.isOrderBookConnected() || false;
   }
 }
