@@ -1,11 +1,11 @@
 {
   "data": {
-    "value": 68,
+    "value": 70,
     "valueClassification": "Greed",
-    "timestamp": 1752439090018,
-    "nextUpdate": 1752482290018,
+    "timestamp": 1752536290020,
+    "nextUpdate": 1752579490020,
     "source": "api"
   },
-  "cachedAt": 1752439103350,
-  "expiresAt": 1752482303350
+  "cachedAt": 1752536724712,
+  "expiresAt": 1752579924712
 }

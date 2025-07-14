@@ -27,13 +27,20 @@ function parseCommandLineArgs(): string | null {
 }
 
 function showUsage() {
-  console.log('Usage: npm start [TICKER] or npm start --ticker TICKER');
+  console.log('Usage:');
+  console.log('  npm run dev -- TICKER');
+  console.log('  npm run dev -- --ticker TICKER');
+  console.log('  TRADING_SYMBOL=TICKER npm run dev');
+  console.log('');
   console.log('Examples:');
-  console.log('  npm start BTCUSDT');
-  console.log('  npm start --ticker SOLUSDT');
-  console.log('  npm start -t ADAUSDT');
+  console.log('  npm run dev -- BTCUSDT');
+  console.log('  npm run dev -- --ticker SOLUSDT');
+  console.log('  npm run dev -- -t ADAUSDT');
+  console.log('  TRADING_SYMBOL=XRPUSDT npm run dev');
   console.log('');
   console.log('Available tickers: BTCUSDT, SOLUSDT, ADAUSDT, XRPUSDT');
+  console.log('');
+  console.log('Note: Use "--" to pass arguments through npm scripts');
 }
 
 async function main() {

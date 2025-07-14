@@ -1,6 +1,6 @@
 import { BinanceService } from '../../services/binance/binanceService';
 import { TradingEngine } from '../../services/tradingEngine';
-import { config, binanceConfig } from '../../config/config';
+import { config } from '../../config/config';
 
 describe('Trading System Integration', () => {
   let binanceService: BinanceService;

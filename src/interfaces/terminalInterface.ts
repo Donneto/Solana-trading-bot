@@ -2,8 +2,7 @@ import chalk from 'chalk';
 import inquirer from 'inquirer';
 import { TradingEngine } from '../services/tradingEngine';
 import { BinanceService } from '../services/binance/binanceService';
-import { config, binanceConfig } from '../config/config';
-import { MarketData, Position, RiskMetrics } from '../interfaces/trading';
+import { config, getBinanceConfig } from '../config/config';
 import { fearGreedService } from '../services/fearGreed/fearGreedService';
 
 export class TerminalInterface {
@@ -13,7 +12,7 @@ export class TerminalInterface {
   private isDisplaying: boolean = false;
 
   constructor() {
-    this.binanceService = new BinanceService(binanceConfig);
+    this.binanceService = new BinanceService(getBinanceConfig());
     this.tradingEngine = new TradingEngine(this.binanceService, config);
     this.setupEventListeners();
   }
@@ -71,7 +70,7 @@ export class TerminalInterface {
   }
 
   private displayBanner(): void {
-    const envStatus = binanceConfig.testnet ? '🧪 TESTNET' : '🚀 LIVE TRADING';
+    const envStatus = getBinanceConfig().testnet ? '🧪 TESTNET' : '🚀 LIVE TRADING';
     const ticker = config.symbol;
     const statusLine = `${envStatus} | Trading: ${ticker}`;
     
@@ -158,7 +157,7 @@ export class TerminalInterface {
     console.log(chalk.white('━'.repeat(50)));
     
     const configs = [
-      ['Environment', binanceConfig.testnet ? chalk.yellow('🧪 TESTNET') : chalk.red('🚀 LIVE TRADING')],
+      ['Environment', getBinanceConfig().testnet ? chalk.yellow('🧪 TESTNET') : chalk.red('🚀 LIVE TRADING')],
       ['Symbol', config.symbol],
       ['Initial Capital', `$${config.initialCapital.toLocaleString()}`],
       ['Daily Profit Target', `$${config.dailyProfitTarget}`],
@@ -170,7 +169,7 @@ export class TerminalInterface {
       ['Max Positions', config.maxOpenPositions],
       ['Fear & Greed Index', config.fearGreedIndexEnabled ? chalk.green('ENABLED') : chalk.gray('DISABLED')],
       ['Strategy', 'Mean Reversion + Live Market Data'],
-      ['Risk Level', binanceConfig.testnet ? 'Safe (Fake Money)' : 'Real Money']
+      ['Risk Level', getBinanceConfig().testnet ? 'Safe (Fake Money)' : 'Real Money']
     ];
 
     configs.forEach(([key, value]) => {
@@ -232,7 +231,7 @@ export class TerminalInterface {
   private async startLiveMonitor(): Promise<void> {
     this.isDisplaying = true;
     
-    const envStatus = binanceConfig.testnet ? chalk.yellow('🧪 TESTNET') : chalk.red('🚀 LIVE');
+    const envStatus = getBinanceConfig().testnet ? chalk.yellow('🧪 TESTNET') : chalk.red('🚀 LIVE');
     const ticker = chalk.cyan(config.symbol);
     
     console.log(chalk.blue('\n🎯 Live Trading Monitor'));
@@ -271,7 +270,7 @@ export class TerminalInterface {
     process.stdout.write('\x1B[2J\x1B[0f');
     
     // Header with ticker and environment
-    const envStatus = binanceConfig.testnet ? chalk.yellow('🧪 TESTNET') : chalk.red('🚀 LIVE');
+    const envStatus = getBinanceConfig().testnet ? chalk.yellow('🧪 TESTNET') : chalk.red('🚀 LIVE');
     const ticker = chalk.cyan(config.symbol);
     
     console.log(chalk.blue('🎯 Live Trading Monitor') + chalk.gray(` - ${new Date().toLocaleTimeString()}`));

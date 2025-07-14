@@ -21,6 +21,7 @@ export class MeanReversionStrategy extends EventEmitter {
   private maxHistoryLength: number;
   private lastSignalTime: number = 0;
   private signalCooldown: number = 60000; // 1 minute cooldown
+  private lastLoggedFearGreedValue: number | null = null;
 
   constructor(config: TradingConfig) {
     super();
@@ -60,11 +61,16 @@ export class MeanReversionStrategy extends EventEmitter {
       const fearGreedData = await fearGreedService.getFearGreedIndex();
       if (fearGreedData) {
         marketData.fearGreedIndex = fearGreedData;
-        logger.debug('Market data enriched with Fear and Greed Index', {
-          value: fearGreedData.value,
-          classification: fearGreedData.valueClassification,
-          source: fearGreedData.source
-        });
+        
+        // Only log when the value changes to reduce spam
+        if (this.lastLoggedFearGreedValue !== fearGreedData.value) {
+          logger.debug('Market data enriched with Fear and Greed Index', {
+            value: fearGreedData.value,
+            classification: fearGreedData.valueClassification,
+            source: fearGreedData.source
+          });
+          this.lastLoggedFearGreedValue = fearGreedData.value;
+        }
       }
     } catch (error) {
       logger.warn('Failed to fetch Fear and Greed Index', { error: (error as Error).message });
