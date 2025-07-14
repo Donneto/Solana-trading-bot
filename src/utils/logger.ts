@@ -4,7 +4,9 @@ import path from 'path';
 
 // Environment context detection - now dynamic
 function getEnvironmentContext(): string {
-  const isTestnet = process.env.BINANCE_TESTNET === 'true';
+  // Check new environment system first, then fallback to legacy
+  const tradingEnv = process.env.TRADING_ENV;
+  const isTestnet = tradingEnv === 'testnet' || process.env.BINANCE_TESTNET === 'true';
   const nodeEnv = process.env.NODE_ENV || 'development';
   
   // Get the symbol from environment, fallback to detecting from config
@@ -36,9 +38,12 @@ function getEnvironmentContext(): string {
 
 // Get current trading symbol for log file naming
 function getCurrentSymbol(): string {
+  // Always get fresh symbol from environment or config
   let symbol = process.env.TRADING_SYMBOL;
   if (!symbol) {
     try {
+      // Clear require cache to get fresh config
+      delete require.cache[require.resolve('../config/config')];
       const config = require('../config/config');
       symbol = config?.config?.symbol;
     } catch {
@@ -99,7 +104,7 @@ function getLoggerForSymbol(symbol?: string): winston.Logger {
     winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
     winston.format.errors({ stack: true }),
     winston.format.printf(({ level, message, timestamp, stack }) => {
-      // Get environment context dynamically for each log entry
+      // Get environment context dynamically for each log entry - this ensures current symbol
       const environmentContext = getEnvironmentContext();
       return `${timestamp} ${environmentContext} [${level.toUpperCase()}]: ${stack || message}`;
     })
@@ -135,7 +140,18 @@ function getLoggerForSymbol(symbol?: string): winston.Logger {
 }
 
 // Default logger (backwards compatibility) - uses current symbol
-export const logger = getLoggerForSymbol();
+export let logger = getLoggerForSymbol();
+
+// Function to refresh logger when trading symbol changes
+export function refreshLogger(): void {
+  // Clear the old logger from cache to force recreation
+  const currentSymbol = getCurrentSymbol();
+  if (loggerCache.has(currentSymbol)) {
+    loggerCache.delete(currentSymbol);
+  }
+  // Re-export the logger with new symbol
+  logger = getLoggerForSymbol();
+}
 
 export class TradingLogger {
   static logTrade(action: string, details: any, symbol?: string): void {

@@ -17,50 +17,50 @@ export const testnetCoinProfiles: Record<string, CoinProfile> = {
   'BTCUSDT': {
     symbol: 'BTCUSDT',
     volatility: 'low',
-    meanReversionPeriod: 14,
-    deviationThreshold: 1.8,
-    stopLossPercentage: 2.0,
-    takeProfitPercentage: 3.0,
-    trailingStopPercentage: 1.5,
-    positionSizePercentage: 20,
-    maxOpenPositions: 3,
-    description: 'Testnet Bitcoin - relaxed settings for testing'
+    meanReversionPeriod: 12,
+    deviationThreshold: 1.5,
+    stopLossPercentage: 4.0,
+    takeProfitPercentage: 6.0,
+    trailingStopPercentage: 3.0,
+    positionSizePercentage: 35,
+    maxOpenPositions: 6,
+    description: 'Testnet Bitcoin - aggressive for strategy validation'
   },
   'SOLUSDT': {
     symbol: 'SOLUSDT',
     volatility: 'medium',
-    meanReversionPeriod: 20,
-    deviationThreshold: 2.2,
-    stopLossPercentage: 2.5,
-    takeProfitPercentage: 3.5,
-    trailingStopPercentage: 2.0,
-    positionSizePercentage: 15,
-    maxOpenPositions: 4,
-    description: 'Testnet Solana - higher risk tolerance for testing'
+    meanReversionPeriod: 18,
+    deviationThreshold: 2.0,
+    stopLossPercentage: 5.0,
+    takeProfitPercentage: 7.0,
+    trailingStopPercentage: 3.5,
+    positionSizePercentage: 30,
+    maxOpenPositions: 7,
+    description: 'Testnet Solana - high risk for strategy testing'
   },
   'ADAUSDT': {
     symbol: 'ADAUSDT',
     volatility: 'high',
-    meanReversionPeriod: 25,
-    deviationThreshold: 2.8,
-    stopLossPercentage: 3.0,
-    takeProfitPercentage: 4.5,
-    trailingStopPercentage: 2.5,
-    positionSizePercentage: 12,
-    maxOpenPositions: 5,
-    description: 'Testnet Cardano - aggressive testing parameters'
+    meanReversionPeriod: 22,
+    deviationThreshold: 2.5,
+    stopLossPercentage: 6.0,
+    takeProfitPercentage: 8.0,
+    trailingStopPercentage: 4.0,
+    positionSizePercentage: 25,
+    maxOpenPositions: 8,
+    description: 'Testnet Cardano - maximum risk for validation'
   },
   'XRPUSDT': {
     symbol: 'XRPUSDT',
     volatility: 'high',
-    meanReversionPeriod: 22,
-    deviationThreshold: 2.6,
-    stopLossPercentage: 2.8,
-    takeProfitPercentage: 4.0,
-    trailingStopPercentage: 2.2,
-    positionSizePercentage: 13,
-    maxOpenPositions: 5,
-    description: 'Testnet XRP - relaxed volatility settings for testing'
+    meanReversionPeriod: 20,
+    deviationThreshold: 2.3,
+    stopLossPercentage: 5.5,
+    takeProfitPercentage: 7.5,
+    trailingStopPercentage: 3.8,
+    positionSizePercentage: 28,
+    maxOpenPositions: 7,
+    description: 'Testnet XRP - aggressive volatility settings for testing'
   }
 };
 
@@ -85,9 +85,9 @@ export function createTestnetConfig(tradingSymbol: string): TradingConfig {
   
   return {
     symbol: tradingSymbol,
-    initialCapital: parseFloat(process.env.INITIAL_CAPITAL || '10000'),
-    dailyProfitTarget: parseFloat(process.env.DAILY_PROFIT_TARGET || '150'),
-    maxDailyLoss: parseFloat(process.env.MAX_DAILY_LOSS || '500'),
+    initialCapital: parseFloat(process.env.INITIAL_CAPITAL || '50000'),
+    dailyProfitTarget: parseFloat(process.env.DAILY_PROFIT_TARGET || '1000'),
+    maxDailyLoss: parseFloat(process.env.MAX_DAILY_LOSS || '2500'),
     
     positionSizePercentage: parseFloat(process.env.POSITION_SIZE_PERCENTAGE || coinProfile.positionSizePercentage.toString()),
     stopLossPercentage: parseFloat(process.env.STOP_LOSS_PERCENTAGE || coinProfile.stopLossPercentage.toString()),
@@ -97,8 +97,8 @@ export function createTestnetConfig(tradingSymbol: string): TradingConfig {
     
     meanReversionPeriod: parseInt(process.env.MEAN_REVERSION_PERIOD || coinProfile.meanReversionPeriod.toString()),
     deviationThreshold: parseFloat(process.env.DEVIATION_THRESHOLD || coinProfile.deviationThreshold.toString()),
-    gridLevels: parseInt(process.env.GRID_LEVELS || '5'),
-    gridSpacingPercentage: parseFloat(process.env.GRID_SPACING_PERCENTAGE || '0.5'),
+    gridLevels: parseInt(process.env.GRID_LEVELS || '8'),
+    gridSpacingPercentage: parseFloat(process.env.GRID_SPACING_PERCENTAGE || '0.8'),
     
     fearGreedIndexEnabled: process.env.FEAR_GREED_INDEX_ENABLED === 'true',
   };

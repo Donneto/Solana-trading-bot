@@ -59,6 +59,8 @@ let tradingSymbol = process.env.TRADING_SYMBOL || 'SOLUSDT';
 // Function to set trading symbol from command line
 export function setTradingSymbol(symbol: string): void {
   tradingSymbol = symbol;
+  // Update environment variable so logger can pick it up
+  process.env.TRADING_SYMBOL = symbol;
   // Update the config with new symbol
   config = createConfig();
 }

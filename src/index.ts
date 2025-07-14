@@ -1,6 +1,6 @@
 import { TerminalInterface } from './interfaces/terminalInterface';
 import { validateConfig, setTradingSymbol } from './config/config';
-import { logger } from './utils/logger';
+import { logger, refreshLogger } from './utils/logger';
 
 function parseCommandLineArgs(): string | null {
   const args = process.argv.slice(2);
@@ -57,6 +57,8 @@ async function main() {
     // Set trading symbol if provided
     if (ticker) {
       setTradingSymbol(ticker);
+      // Refresh logger to use the new symbol
+      refreshLogger();
     }
     
     // Validate configuration
