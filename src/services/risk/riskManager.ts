@@ -63,8 +63,13 @@ export class RiskManager extends EventEmitter {
 
     if (positionSize > this.config.positionSizePercentage) {
       TradingLogger.logRisk('Position size too large', {
-        requestedSize: positionSize,
-        maxSize: this.config.positionSizePercentage
+        requestedSize: positionSize.toFixed(2),
+        maxSize: this.config.positionSizePercentage,
+        quantity: quantity,
+        price: price,
+        currentBalance: currentBalance,
+        tradeValue: tradeValue.toFixed(2),
+        calculation: `(${quantity} × ${price} / ${currentBalance}) × 100 = ${positionSize.toFixed(2)}%`
       });
       return { isValid: false, reason: 'Position size exceeds maximum allowed' };
     }

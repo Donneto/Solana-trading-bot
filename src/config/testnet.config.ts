@@ -35,7 +35,7 @@ export const testnetCoinProfiles: Record<string, CoinProfile> = {
   'SOLUSDT': {
     symbol: 'SOLUSDT',
     volatility: 'medium',
-    strategy: 'gridTrading',
+    strategy: 'momentum',
     meanReversionPeriod: 18,
     deviationThreshold: 2.0,
     stopLossPercentage: 3.5,
@@ -45,7 +45,7 @@ export const testnetCoinProfiles: Record<string, CoinProfile> = {
     maxOpenPositions: 5,
     gridLevels: 10,
     gridSpacingPercentage: 1.5,
-    description: 'Testnet Solana - grid trading for volatility capture ($10K scale)'
+    description: 'Testnet Solana - momentum strategy for trend following ($10K scale)'
   },
   'ADAUSDT': {
     symbol: 'ADAUSDT',
@@ -56,8 +56,8 @@ export const testnetCoinProfiles: Record<string, CoinProfile> = {
     stopLossPercentage: 4.0,
     takeProfitPercentage: 6.0,
     trailingStopPercentage: 3.0,
-    positionSizePercentage: 10,
-    maxOpenPositions: 6,
+    positionSizePercentage: 5,
+    maxOpenPositions: 3,
     gridLevels: 8,
     gridSpacingPercentage: 2.0,
     description: 'Testnet Cardano - momentum strategy for trend following ($10K scale)'
@@ -95,14 +95,19 @@ export function getTestnetCoinProfile(symbol: string): CoinProfile {
   }
 }
 
-export function createTestnetConfig(tradingSymbol: string): TradingConfig {
+export function createTestnetConfig(tradingSymbol: string, actualBalance?: number): TradingConfig {
   const coinProfile = getTestnetCoinProfile(tradingSymbol);
+  
+  // REQUIRE actual balance - no fallbacks
+  if (!actualBalance) {
+    throw new Error('Actual testnet balance is required - no fallback values allowed');
+  }
   
   return {
     symbol: tradingSymbol,
-    initialCapital: parseFloat(process.env.INITIAL_CAPITAL || '10000'),
-    dailyProfitTarget: parseFloat(process.env.DAILY_PROFIT_TARGET || '200'),
-    maxDailyLoss: parseFloat(process.env.MAX_DAILY_LOSS || '500'),
+    initialCapital: actualBalance,
+    dailyProfitTarget: actualBalance * 0.02, // 2% of actual balance
+    maxDailyLoss: actualBalance * 0.05, // 5% of actual balance
     
     strategy: coinProfile.strategy,
     positionSizePercentage: parseFloat(process.env.POSITION_SIZE_PERCENTAGE || coinProfile.positionSizePercentage.toString()),

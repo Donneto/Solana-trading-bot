@@ -11,7 +11,7 @@ import { logger, TradingLogger } from '../utils/logger';
 export class TradingEngine extends EventEmitter {
   private binanceService: BinanceService;
   private riskManager: RiskManager;
-  private strategy: MeanReversionStrategy | GridTradingStrategy | MomentumStrategy;
+  private strategy: MeanReversionStrategy | GridTradingStrategy | MomentumStrategy | null = null;
   private config: TradingConfig;
   
   private isRunning: boolean = false;
@@ -28,67 +28,83 @@ export class TradingEngine extends EventEmitter {
     this.binanceService = binanceService;
     this.config = config;
     this.riskManager = new RiskManager(config);
-    this.strategy = this.createStrategy(config);
-    
-    this.setupEventListeners();
+    this.currentBalance = config.initialCapital;
   }
 
   private createStrategy(config: TradingConfig): MeanReversionStrategy | GridTradingStrategy | MomentumStrategy {
     switch (config.strategy) {
+      case 'momentum':
+        return new MomentumStrategy(config);
       case 'meanReversion':
         return new MeanReversionStrategy(config);
       case 'gridTrading':
         return new GridTradingStrategy(config);
-      case 'momentum':
-        return new MomentumStrategy(config);
       default:
-        logger.warn(`Unknown strategy: ${config.strategy}, defaulting to mean reversion`);
-        return new MeanReversionStrategy(config);
+        throw new Error(`Unknown strategy: ${config.strategy}`);
     }
   }
 
-  private setupEventListeners(): void {
-    // Market data events
-    this.binanceService.on('marketData', this.handleMarketData.bind(this));
-    this.binanceService.on('connectionFailed', this.handleConnectionFailure.bind(this));
-
-    // Strategy events
-    this.strategy.on('signal', this.handleTradingSignal.bind(this));
-
-    // Risk management events
-    this.riskManager.on('positionClosed', this.handlePositionClosed.bind(this));
-    this.riskManager.on('dailyLossLimitReached', this.handleDailyLossLimit.bind(this));
-    this.riskManager.on('dailyProfitTargetReached', this.handleDailyProfitTarget.bind(this));
-  }
-
   async start(): Promise<void> {
+    if (this.isRunning) {
+      logger.warn('Trading engine is already running');
+      return;
+    }
+
     try {
-      logger.info('Starting trading engine...');
+      logger.info('🚀 Starting trading engine...');
       
       // Validate Binance connection
-      const connectionValid = await this.binanceService.validateConnection();
-      if (!connectionValid) {
-        throw new Error('Failed to validate Binance connection');
+      const isConnected = await this.binanceService.validateConnection();
+      if (!isConnected) {
+        throw new Error('Failed to establish Binance connection');
       }
 
-      // Get initial balance
-      await this.updateBalance();
-      
-      if (this.currentBalance < this.config.initialCapital * 0.1) {
-        throw new Error(`Insufficient balance: ${this.currentBalance} USDT`);
+      // Initialize User Data Stream for real-time position tracking
+      try {
+        await this.binanceService.initializeUserDataStream();
+        logger.info('✅ Real-time position tracking initialized');
+      } catch (error) {
+        logger.warn('⚠️  User Data Stream failed - continuing with polling mode', { error });
       }
 
-      // Start real-time data feed
-      this.binanceService.startRealTimeData(this.config.symbol);
+      // Set up User Data Stream event listeners
+      this.setupUserDataStreamListeners();
+
+      // Load existing positions from Binance
+      await this.loadExistingPositions();
       
+      // Initialize strategy
+      this.strategy = this.createStrategy(this.config);
+
+      // Inject risk manager into strategy for position-aware calculations
+      if (this.strategy && 'setRiskManager' in this.strategy) {
+        (this.strategy as any).setRiskManager(this.riskManager);
+      }
+
+      // Set up strategy event listeners
+      this.strategy.on('signal', this.handleTradingSignal.bind(this));
+
+      // Start market data stream
+      await this.binanceService.startRealTimeData(this.config.symbol);
+      
+      // Set up market data and connection event listeners
+      this.binanceService.on('marketData', this.handleMarketData.bind(this));
+      this.binanceService.on('connectionFailed', this.handleConnectionFailure.bind(this));
+
+      // Set up risk manager event listeners
+      this.riskManager.on('dailyLossLimitReached', this.handleDailyLossLimit.bind(this));
+      this.riskManager.on('dailyProfitTargetReached', this.handleDailyProfitTarget.bind(this));
+      this.riskManager.on('positionClosed', this.handlePositionClosed.bind(this));
+
       this.isRunning = true;
-      logger.info('Trading engine started successfully', {
-        symbol: this.config.symbol,
-        balance: this.currentBalance,
-        strategy: this.config.strategy
-      });
-
       this.emit('started');
+      
+      TradingLogger.logTrade('TRADING_ENGINE_STARTED', {
+        symbol: this.config.symbol,
+        strategy: this.config.strategy,
+        initialCapital: this.config.initialCapital,
+        userDataStreamActive: this.binanceService.isUserDataStreamConnected()
+      });
 
     } catch (error) {
       TradingLogger.logError(error as Error, { context: 'TradingEngine.start' });
@@ -96,90 +112,144 @@ export class TradingEngine extends EventEmitter {
     }
   }
 
-  async stop(): Promise<void> {
-    try {
-      logger.info('Stopping trading engine...');
+  private setupUserDataStreamListeners(): void {
+    // Real-time order fill notifications
+    this.binanceService.on('orderFilled', (data: any) => {
+      logger.info(`🎯 Order FILLED: ${data.symbol} ${data.side} ${data.executedQty} @ $${data.avgPrice}`, {
+        orderId: data.orderId,
+        totalValue: data.totalValue
+      });
       
-      this.isRunning = false;
-      
-      // Close all open positions
-      await this.closeAllPositions('ENGINE_SHUTDOWN');
-      
-      // Cancel all open orders
-      await this.cancelAllOpenOrders();
-      
-      // Disconnect from Binance
-      this.binanceService.disconnect();
-      
-      logger.info('Trading engine stopped successfully');
-      this.emit('stopped');
+      // Update position in risk manager
+      this.handleOrderFilled(data);
+    });
 
+    // Partial fills
+    this.binanceService.on('orderPartiallyFilled', (data: any) => {
+      logger.info(`⚡ Order PARTIALLY FILLED: ${data.symbol} ${data.side} ${data.executedQty}/${data.executedQty + data.remainingQty}`, {
+        orderId: data.orderId,
+        executedQty: data.executedQty,
+        remainingQty: data.remainingQty
+      });
+    });
+
+    // Order rejections
+    this.binanceService.on('orderRejected', (data: any) => {
+      logger.error(`❌ Order REJECTED: ${data.symbol} ${data.side} - ${data.reason}`, {
+        orderId: data.orderId
+      });
+    });
+
+    // Balance updates
+    this.binanceService.on('balanceUpdate', (data: any) => {
+      logger.info(`💰 Balance Update: ${data.asset} ${data.balanceDelta > 0 ? '+' : ''}${data.balanceDelta}`, {
+        newBalance: data.newBalance
+      });
+      
+      // Update current balance if it's USDT
+      if (data.asset === 'USDT') {
+        this.currentBalance = data.newBalance;
+      }
+    });
+
+    // Account updates
+    this.binanceService.on('accountUpdate', (data: any) => {
+      logger.debug('Account position update received', {
+        balances: data.balances?.length || 0
+      });
+    });
+  }
+
+  private handleOrderFilled(orderData: any): void {
+    try {
+      const { orderId, symbol, side, executedQty, avgPrice, totalValue } = orderData;
+      
+      // Find if this relates to an existing position in our risk manager
+      const existingPositions = this.riskManager.getOpenPositions();
+      const relatedPosition = existingPositions.find(p => p.symbol === symbol);
+      
+      if (relatedPosition) {
+        // Update existing position
+        logger.info(`Updating existing position ${relatedPosition.id} with new fill`);
+        // Note: In a full implementation, you'd update the position quantity/price
+        // For now, we'll create a new position entry
+      }
+      
+      // Create new position from the filled order
+      const position: Position = {
+        id: `fill-${orderId}`,
+        symbol,
+        side: side as 'BUY' | 'SELL',
+        quantity: executedQty,
+        entryPrice: avgPrice,
+        currentPrice: avgPrice,
+        unrealizedPnL: 0,
+        stopLossPrice: this.riskManager.calculateStopLoss(avgPrice, side as 'BUY' | 'SELL'),
+        takeProfitPrice: this.riskManager.calculateTakeProfit(avgPrice, side as 'BUY' | 'SELL'),
+        trailingStopPrice: 0,
+        timestamp: Date.now(),
+        status: 'OPEN'
+      };
+      
+      // Add to risk manager
+      this.riskManager.addPosition(position);
+      
+      logger.info(`📊 Position created from order fill: ${side} ${executedQty} ${symbol} @ $${avgPrice}`);
+      
+      // Emit event for other components
+      this.emit('positionCreated', position);
+      
     } catch (error) {
-      TradingLogger.logError(error as Error, { context: 'TradingEngine.stop' });
+      TradingLogger.logError(error as Error, { 
+        context: 'TradingEngine.handleOrderFilled',
+        orderData 
+      });
     }
   }
 
-  emergencyShutdown(): void {
-    logger.error('EMERGENCY SHUTDOWN INITIATED');
-    this.emergencyStop = true;
-    this.stop();
-    this.emit('emergencyShutdown');
-  }
-
   private async handleMarketData(marketData: MarketData): Promise<void> {
-    if (!this.isRunning || this.emergencyStop) return;
+    if (!this.isRunning) return;
 
-    try {
-      this.lastMarketData = marketData;
-      
-      // Update open positions with current price
-      const openPositions = this.riskManager.getOpenPositions();
-      for (const position of openPositions) {
+    this.lastMarketData = marketData;
+
+    // Update all open positions with current price
+    const openPositions = this.riskManager.getOpenPositions();
+    for (const position of openPositions) {
+      if (position.symbol === marketData.symbol) {
         this.riskManager.updatePosition(position.id, marketData.price);
       }
+    }
 
-      // Get trading signal from strategy
-      // Use async method if Fear and Greed Index is enabled for enhanced analysis
-      if (this.config.fearGreedIndexEnabled) {
-        await this.strategy.analyzeMarketAsync(marketData);
-      } else {
-        this.strategy.analyzeMarket(marketData);
+    // Generate trading signal from strategy
+    if (this.strategy) {
+      const signal = await this.strategy.analyzeMarketAsync(marketData);
+      if (signal) {
+        await this.handleTradingSignal(signal);
       }
-      
-      // Emit market data for UI
-      this.emit('marketData', marketData);
-
-    } catch (error) {
-      TradingLogger.logError(error as Error, { context: 'TradingEngine.handleMarketData' });
     }
   }
 
   private async handleTradingSignal(signal: TradingSignal): Promise<void> {
-    if (!this.isRunning || this.emergencyStop) return;
+    if (!this.isRunning) return;
 
     try {
-      // Only process BUY and SELL signals, ignore HOLD
+      // Only process BUY and SELL signals, skip HOLD
       if (signal.action === 'HOLD') return;
-
-      // Update balance before trading
-      await this.updateBalance();
 
       // Validate trade with risk manager
       const validation = this.riskManager.validateTrade(
-        signal.action,
+        signal.action as 'BUY' | 'SELL',
         signal.quantity,
         signal.price,
         this.currentBalance
       );
 
       if (!validation.isValid) {
-        logger.warn('Trade rejected by risk manager', {
+        logger.warn('Trade signal rejected by risk manager', {
           reason: validation.reason,
-          signal: {
-            action: signal.action,
-            price: signal.price,
-            quantity: signal.quantity
-          }
+          action: signal.action,
+          quantity: signal.quantity,
+          price: signal.price
         });
         return;
       }
@@ -188,7 +258,10 @@ export class TradingEngine extends EventEmitter {
       await this.executeTrade(signal);
 
     } catch (error) {
-      TradingLogger.logError(error as Error, { context: 'TradingEngine.handleTradingSignal' });
+      TradingLogger.logError(error as Error, { 
+        context: 'TradingEngine.handleTradingSignal',
+        signal: signal
+      });
     }
   }
 
@@ -235,29 +308,10 @@ export class TradingEngine extends EventEmitter {
           });
         }
 
-        // Create position
-        const position: Position = {
-          id: uuidv4(),
-          symbol: this.config.symbol,
-          side: signal.action,
-          quantity: fillQuantity,
-          entryPrice: fillPrice,
-          currentPrice: fillPrice,
-          unrealizedPnL: 0,
-          stopLossPrice: this.riskManager.calculateStopLoss(fillPrice, signal.action),
-          takeProfitPrice: this.riskManager.calculateTakeProfit(fillPrice, signal.action),
-          trailingStopPrice: this.riskManager.calculateTrailingStop(fillPrice, fillPrice, signal.action),
-          timestamp: Date.now(),
-          status: 'OPEN'
-        };
-
-        // Add position to risk manager
-        this.riskManager.addPosition(position);
-
-        // Place protective orders
-        await this.placeProtectiveOrders(position);
-
-        this.emit('tradeExecuted', { position, marketOrder });
+        // Position creation will be handled by User Data Stream
+        // via handleOrderFilled when the executionReport arrives
+        
+        logger.info(`✅ Order executed: ${signal.action} ${fillQuantity} ${this.config.symbol} @ $${fillPrice}`);
 
       } else {
         logger.warn('Market order not filled', { orderId: marketOrder.orderId, status: marketOrder.status });
@@ -271,74 +325,70 @@ export class TradingEngine extends EventEmitter {
     }
   }
 
-  private async placeProtectiveOrders(position: Position): Promise<void> {
+  private async loadExistingPositions(): Promise<void> {
     try {
-      const oppositeAction = position.side === 'BUY' ? 'SELL' : 'BUY';
-
-      // Place stop loss order
-      const stopLossOrder = await this.binanceService.placeStopLossOrder(
-        position.symbol,
-        oppositeAction,
-        position.quantity,
-        position.stopLossPrice
-      );
-      this.openOrderIds.add(stopLossOrder.orderId);
-
-      // Place take profit order
-      const takeProfitOrder = await this.binanceService.placeTakeProfitOrder(
-        position.symbol,
-        oppositeAction,
-        position.quantity,
-        position.takeProfitPrice
-      );
-      this.openOrderIds.add(takeProfitOrder.orderId);
-
-      logger.info('Protective orders placed', {
-        positionId: position.id,
-        stopLossOrderId: stopLossOrder.orderId,
-        takeProfitOrderId: takeProfitOrder.orderId
-      });
-
-    } catch (error) {
-      TradingLogger.logError(error as Error, { 
-        context: 'TradingEngine.placeProtectiveOrders',
-        positionId: position.id
-      });
+      logger.info('Checking for existing open positions...');
       
-      // If protective orders fail, close position immediately
-      await this.forceClosePosition(position.id, 'PROTECTIVE_ORDER_FAILURE');
+      // Get open orders from Binance
+      const openOrders = await this.binanceService.getOpenOrders(this.config.symbol);
+      
+      if (openOrders.length > 0) {
+        logger.info(`Found ${openOrders.length} open orders for ${this.config.symbol}`);
+        
+        // Convert Binance orders to our Position format and add to risk manager
+        for (const order of openOrders) {
+          try {
+            const entryPrice = parseFloat(order.price || order.stopPrice || '0');
+            
+            // Create position from order data
+            const position = {
+              id: `binance-${order.orderId}`,
+              symbol: order.symbol,
+              side: order.side as 'BUY' | 'SELL',
+              quantity: parseFloat(order.origQty),
+              entryPrice: entryPrice,
+              currentPrice: entryPrice, // Will be updated with market data
+              unrealizedPnL: 0, // Will be calculated when price updates
+              stopLossPrice: this.riskManager.calculateStopLoss(entryPrice, order.side as 'BUY' | 'SELL'),
+              takeProfitPrice: this.riskManager.calculateTakeProfit(entryPrice, order.side as 'BUY' | 'SELL'),
+              trailingStopPrice: 0, // Will be set if trailing stop is enabled
+              timestamp: order.time,
+              status: 'OPEN' as const
+            };
+            
+            // Add position to risk manager
+            this.riskManager.addPosition(position);
+            
+            logger.info(`Loaded existing position: ${position.side} ${position.quantity} ${position.symbol} @ $${position.entryPrice}`);
+            
+          } catch (error) {
+            TradingLogger.logError(error as Error, { 
+              context: 'TradingEngine.loadExistingPositions',
+              orderId: order.orderId
+            });
+          }
+        }
+        
+        // Display summary
+        const totalPositions = this.riskManager.getOpenPositions().length;
+        logger.info(`✅ Loaded ${totalPositions} existing positions into risk manager`);
+        
+      } else {
+        logger.info('No existing open positions found');
+      }
+      
+    } catch (error) {
+      TradingLogger.logError(error as Error, { context: 'TradingEngine.loadExistingPositions' });
+      logger.warn('Failed to load existing positions - continuing with startup');
     }
   }
 
-  private async handlePositionClosed(position: Position, reason: string): Promise<void> {
-    try {
-      const oppositeAction = position.side === 'BUY' ? 'SELL' : 'BUY';
-      
-      // Place market order to close position
-      const closeOrder = await this.binanceService.placeMarketOrder(
-        position.symbol,
-        oppositeAction,
-        position.quantity
-      );
-
-      // Cancel any remaining protective orders for this position
-      await this.cancelOrdersForPosition(position.id);
-
-      TradingLogger.logTrade('POSITION_CLOSED_BY_RISK_MANAGER', {
-        positionId: position.id,
-        reason,
-        closeOrderId: closeOrder.orderId,
-        realizedPnL: position.unrealizedPnL
-      });
-
-      this.emit('positionClosed', { position, closeOrder, reason });
-
-    } catch (error) {
-      TradingLogger.logError(error as Error, { 
-        context: 'TradingEngine.handlePositionClosed',
-        positionId: position.id
-      });
-    }
+  private handlePositionClosed(position: Position, reason: string): void {
+    logger.info(`Position closed: ${position.id} - ${reason}`, {
+      symbol: position.symbol,
+      side: position.side,
+      pnl: position.unrealizedPnL
+    });
   }
 
   private async handleDailyLossLimit(dailyPnL: number): Promise<void> {
@@ -366,14 +416,6 @@ export class TradingEngine extends EventEmitter {
   private handleConnectionFailure(): void {
     logger.error('Binance connection failed - initiating emergency procedures');
     this.emergencyShutdown();
-  }
-
-  private async updateBalance(): Promise<void> {
-    try {
-      this.currentBalance = await this.binanceService.getAccountBalance('USDT');
-    } catch (error) {
-      TradingLogger.logError(error as Error, { context: 'TradingEngine.updateBalance' });
-    }
   }
 
   private async closeAllPositions(reason: string): Promise<void> {
@@ -405,9 +447,8 @@ export class TradingEngine extends EventEmitter {
       );
 
       this.riskManager.closePosition(positionId, reason);
-      await this.cancelOrdersForPosition(positionId);
-
-      TradingLogger.logTrade('POSITION_FORCE_CLOSED', {
+      
+      TradingLogger.logTrade('FORCE_CLOSE_POSITION', {
         positionId,
         reason,
         closeOrderId: closeOrder.orderId
@@ -430,10 +471,7 @@ export class TradingEngine extends EventEmitter {
           await this.binanceService.cancelOrder(this.config.symbol, order.orderId);
           this.openOrderIds.delete(order.orderId);
         } catch (error) {
-          TradingLogger.logError(error as Error, { 
-            context: 'TradingEngine.cancelAllOpenOrders',
-            orderId: order.orderId
-          });
+          // Continue canceling other orders even if one fails
         }
       }
     } catch (error) {
@@ -441,24 +479,44 @@ export class TradingEngine extends EventEmitter {
     }
   }
 
-  private async cancelOrdersForPosition(_positionId: string): Promise<void> {
-    // This is a simplified implementation
-    // In a production system, you'd track which orders belong to which positions
-    const openOrders = await this.binanceService.getOpenOrders(this.config.symbol);
-    
-    for (const order of openOrders) {
-      try {
-        await this.binanceService.cancelOrder(this.config.symbol, order.orderId);
-        this.openOrderIds.delete(order.orderId);
-      } catch (error) {
-        // Continue canceling other orders even if one fails
-      }
+  async stop(): Promise<void> {
+    try {
+      logger.info('Stopping trading engine...');
+      
+      this.isRunning = false;
+      
+      // Close all open positions
+      await this.closeAllPositions('ENGINE_SHUTDOWN');
+      
+      // Cancel all open orders
+      await this.cancelAllOpenOrders();
+      
+      // Disconnect from Binance
+      this.binanceService.disconnect();
+      
+      this.emit('stopped');
+      logger.info('Trading engine stopped');
+    } catch (error) {
+      TradingLogger.logError(error as Error, { context: 'TradingEngine.stop' });
     }
   }
 
-  // Getters for monitoring
+  emergencyShutdown(): void {
+    this.emergencyStop = true;
+    this.isRunning = false;
+    
+    logger.error('🚨 EMERGENCY SHUTDOWN ACTIVATED');
+    
+    // Attempt to close positions and cancel orders
+    this.closeAllPositions('EMERGENCY_SHUTDOWN').catch(() => {});
+    this.cancelAllOpenOrders().catch(() => {});
+    
+    this.emit('emergencyShutdown');
+  }
+
+  // Public getters
   isEngineRunning(): boolean {
-    return this.isRunning && !this.emergencyStop;
+    return this.isRunning;
   }
 
   getCurrentBalance(): number {
@@ -478,10 +536,18 @@ export class TradingEngine extends EventEmitter {
   }
 
   getStrategyState(): any {
-    return this.strategy.getStrategyState();
+    return this.strategy?.getStrategyState() || null;
   }
 
   isInEmergencyMode(): boolean {
     return this.emergencyStop;
+  }
+
+  async updateBalance(): Promise<void> {
+    try {
+      this.currentBalance = await this.binanceService.getAccountBalance('USDT');
+    } catch (error) {
+      TradingLogger.logError(error as Error, { context: 'TradingEngine.updateBalance' });
+    }
   }
 }

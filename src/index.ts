@@ -54,15 +54,27 @@ async function main() {
       process.exit(0);
     }
     
-    // Set trading symbol if provided
+    // Get actual balance first to create proper config
+    const { BinanceService } = await import('./services/binance/binanceService');
+    const { getBinanceConfig } = await import('./config/config');
+    
+    const binanceService = new BinanceService(getBinanceConfig());
+    const actualBalance = await binanceService.getAccountBalance('USDT');
+    
+    console.log(`💰 Testnet Balance: $${actualBalance.toFixed(2)} USDT`);
+    
+    // Set trading symbol with actual balance
     if (ticker) {
-      setTradingSymbol(ticker);
+      setTradingSymbol(ticker, actualBalance);
       // Refresh logger to use the new symbol
       refreshLogger();
+    } else {
+      // Update default symbol config with actual balance  
+      setTradingSymbol('SOLUSDT', actualBalance);
     }
     
-    // Validate configuration
-    validateConfig();
+    // Validate configuration with actual balance
+    validateConfig(actualBalance);
     
     // Create and start terminal interface
     const terminal = new TerminalInterface();

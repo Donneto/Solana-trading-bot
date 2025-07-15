@@ -404,10 +404,23 @@ export class BinanceService extends EventEmitter {
         }
       }, 30 * 60 * 1000); // 30 minutes
 
-      this.userDataConnected = true;
-      logger.info('✅ User Data Stream connected - real-time position tracking active');
+      logger.info('User Data Stream initialized successfully');
     } catch (error) {
       logger.error('Failed to initialize User Data Stream:', error);
+      throw new Error('Failed to initialize User Data Stream');
+    }
+  }
+        } catch (error) {
+          logger.warn('Failed to keep alive user data stream', { error });
+          this.reconnectUserDataStream();
+        }
+      }, 30 * 60 * 1000); // 30 minutes
+
+      this.userDataConnected = true;
+      logger.info('✅ User Data Stream connected - real-time position tracking active');
+      
+    } catch (error) {
+      TradingLogger.logError(error as Error, { context: 'BinanceService.initializeUserDataStream' });
       throw new Error('Failed to initialize User Data Stream');
     }
   }

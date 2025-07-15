@@ -57,30 +57,55 @@ const currentEnvironment = loadEnvironment();
 let tradingSymbol = process.env.TRADING_SYMBOL || 'SOLUSDT';
 
 // Function to set trading symbol from command line
-export function setTradingSymbol(symbol: string): void {
+export function setTradingSymbol(symbol: string, actualBalance?: number): void {
   tradingSymbol = symbol;
   // Update environment variable so logger can pick it up
   process.env.TRADING_SYMBOL = symbol;
   // Update the config with new symbol
-  config = createConfig();
+  config = createConfig(actualBalance);
+}
+
+// Function to create a temporary config for display before balance is known
+function createTempConfig(): TradingConfig {
+  const coinProfile = currentEnvironment === 'production' 
+    ? { strategy: 'meanReversion' as const, positionSizePercentage: 8 }
+    : { strategy: 'momentum' as const, positionSizePercentage: 10 };
+    
+  return {
+    symbol: tradingSymbol,
+    initialCapital: 0, // Will be updated with real balance
+    dailyProfitTarget: 0, // Will be calculated from real balance  
+    maxDailyLoss: 0, // Will be calculated from real balance
+    strategy: coinProfile.strategy,
+    positionSizePercentage: coinProfile.positionSizePercentage,
+    stopLossPercentage: 3.0,
+    takeProfitPercentage: 4.5,
+    trailingStopPercentage: 2.0,
+    maxOpenPositions: 3,
+    meanReversionPeriod: 20,
+    deviationThreshold: 2.0,
+    gridLevels: 8,
+    gridSpacingPercentage: 1.0,
+    fearGreedIndexEnabled: process.env.FEAR_GREED_INDEX_ENABLED === 'true'
+  };
 }
 
 // Function to create configuration based on environment
-function createConfig(): TradingConfig {
+function createConfig(actualBalance?: number): TradingConfig {
   if (currentEnvironment === 'production') {
-    return createProductionConfig(tradingSymbol);
+    return createProductionConfig(tradingSymbol, actualBalance);
   } else {
-    return createTestnetConfig(tradingSymbol);
+    return createTestnetConfig(tradingSymbol, actualBalance);
   }
 }
 
-// Get config function that returns current configuration
-export function getConfig(): TradingConfig {
-  return createConfig();
+// Get config function that returns current configuration (requires actual balance)
+export function getConfig(actualBalance?: number): TradingConfig {
+  return createConfig(actualBalance);
 }
 
-// Initialize with default config
-export let config = createConfig();
+// Initialize with temporary config - will be updated when trading starts with actual balance
+export let config = createTempConfig();
 
 // Export environment-specific configurations
 export function getFearGreedConfig(): FearGreedConfig {
@@ -99,17 +124,22 @@ export const fearGreedConfig: FearGreedConfig = getFearGreedConfig();
 export const binanceConfig: BinanceCredentials = getBinanceConfig();
 
 // Display configuration summary
-function displayConfigSummary(): void {
-  const currentConfig = getConfig();
+function displayConfigSummary(actualBalance?: number): void {
+  const currentConfig = actualBalance ? getConfig(actualBalance) : config;
   const envLabel = currentEnvironment === 'production' ? 'LIVE TRADING' : 'TESTNET';
   
-  console.log(`💰 Capital: $${currentConfig.initialCapital} | Target: $${currentConfig.dailyProfitTarget}/day | Max Loss: $${currentConfig.maxDailyLoss}/day`);
-  console.log(`📊 Mode: ${envLabel} | Coin: ${currentConfig.symbol} | Position Size: ${currentConfig.positionSizePercentage}%`);
-  console.log(`⚙️  Strategy: Bollinger(${currentConfig.meanReversionPeriod}, ${currentConfig.deviationThreshold}) | Stop: ${currentConfig.stopLossPercentage}% | Take: ${currentConfig.takeProfitPercentage}%`);
+  if (currentConfig.initialCapital === 0) {
+    console.log(`💰 Capital: Fetching from ${envLabel}... | Mode: ${envLabel} | Coin: ${currentConfig.symbol}`);
+    console.log(`📊 Strategy: ${currentConfig.strategy} | Position Size: ${currentConfig.positionSizePercentage}%`);
+  } else {
+    console.log(`💰 Capital: $${currentConfig.initialCapital} | Target: $${currentConfig.dailyProfitTarget}/day | Max Loss: $${currentConfig.maxDailyLoss}/day`);
+    console.log(`📊 Mode: ${envLabel} | Coin: ${currentConfig.symbol} | Position Size: ${currentConfig.positionSizePercentage}%`);
+    console.log(`⚙️  Strategy: ${currentConfig.strategy} | Stop: ${currentConfig.stopLossPercentage}% | Take: ${currentConfig.takeProfitPercentage}%`);
+  }
 }
 
-export const validateConfig = (): void => {
-  const currentConfig = getConfig();
+export const validateConfig = (actualBalance?: number): void => {
+  const currentConfig = actualBalance ? getConfig(actualBalance) : config;
   const currentBinanceConfig = getBinanceConfig();
   
   if (!currentBinanceConfig.apiKey || !currentBinanceConfig.apiSecret) {
@@ -153,5 +183,5 @@ export const validateConfig = (): void => {
   }
   
   // Display configuration after validation
-  displayConfigSummary();
+  displayConfigSummary(actualBalance);
 };

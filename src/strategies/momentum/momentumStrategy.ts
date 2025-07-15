@@ -28,9 +28,10 @@ export class MomentumStrategy extends EventEmitter {
   private volumeHistory: number[] = [];
   private emaCache: { [period: number]: number[] } = {};
   private lastSignalTime: number = 0;
-  private signalCooldown: number = 60000; // 1 minute cooldown (reduced from 2 minutes)
+  private signalCooldown: number = 300000; // 5 minute cooldown - prevent overtrading
   private trendState: TrendState;
   private lastLoggedFearGreedValue: number | null = null;
+  private riskManager: any; // Will be injected by TradingEngine
 
   constructor(config: TradingConfig) {
     super();
@@ -41,6 +42,10 @@ export class MomentumStrategy extends EventEmitter {
       duration: 0,
       lastTrendChange: Date.now()
     };
+  }
+
+  setRiskManager(riskManager: any): void {
+    this.riskManager = riskManager;
   }
 
   analyzeMarket(marketData: MarketData): TradingSignal | null {
@@ -432,11 +437,10 @@ export class MomentumStrategy extends EventEmitter {
     const criticalBuyMet = buyConditions.filter(c => c.importance === 'CRITICAL').every(c => c.met);
     const buyScore = buyConditions.filter(c => c.met).length / buyConditions.length * 100;
     
-    if (criticalBuyMet && buyScore >= 60) {
+    if (criticalBuyMet && buyScore >= 75) {
       confidence = this.calculateMomentumConfidence('BUY', indicators, marketData.fearGreedIndex);
       
-      if (confidence >= 60) {
-        signal = {
+        if (confidence >= 75) {        signal = {
           action: 'BUY',
           confidence,
           price: currentPrice,
@@ -455,10 +459,10 @@ export class MomentumStrategy extends EventEmitter {
       const criticalSellMet = sellConditions.filter(c => c.importance === 'CRITICAL').every(c => c.met);
       const sellScore = sellConditions.filter(c => c.met).length / sellConditions.length * 100;
       
-      if (criticalSellMet && sellScore >= 60) {
+      if (criticalSellMet && sellScore >= 75) {
         confidence = this.calculateMomentumConfidence('SELL', indicators, marketData.fearGreedIndex);
         
-        if (confidence >= 60) {
+        if (confidence >= 75) {
           signal = {
             action: 'SELL',
             confidence,
@@ -578,7 +582,7 @@ export class MomentumStrategy extends EventEmitter {
       confidence += fearGreedBoost;
     }
 
-    return Math.max(60, Math.min(95, confidence));
+    return Math.max(75, Math.min(95, confidence));
   }
 
   private calculateFearGreedMomentumAdjustment(fearGreedData: FearGreedData, action: 'BUY' | 'SELL'): number {
@@ -622,12 +626,42 @@ export class MomentumStrategy extends EventEmitter {
   private calculatePositionSize(price: number): number {
     const baseSize = this.config.positionSizePercentage / 100;
     const capital = this.config.initialCapital;
-    const positionValue = capital * baseSize;
     
+    // Get current exposure for this symbol if risk manager is available
+    let currentExposure = 0;
+    if (this.riskManager) {
+      const openPositions = this.riskManager.getOpenPositions();
+      const symbolPositions = openPositions.filter((p: any) => p.symbol === this.config.symbol);
+      currentExposure = symbolPositions.reduce((total: number, pos: any) => {
+        return total + (pos.quantity * pos.currentPrice);
+      }, 0);
+    }
+    
+    // Calculate remaining capacity for this symbol (max 20% total exposure per symbol)
+    const maxSymbolExposure = capital * 0.20; // 20% max per symbol
+    const remainingCapacity = Math.max(0, maxSymbolExposure - currentExposure);
+    
+    // Calculate base position value
+    const basePositionValue = capital * baseSize;
+    
+    // Use the smaller of base size or remaining capacity
+    const adjustedPositionValue = Math.min(basePositionValue, remainingCapacity);
+    
+    // Ensure minimum order value
     const minOrderValue = 10;
-    const calculatedValue = Math.max(minOrderValue, positionValue);
+    const finalPositionValue = Math.max(minOrderValue, adjustedPositionValue);
     
-    return parseFloat((calculatedValue / price).toFixed(6));
+    // If we can't even place minimum order, return 0
+    if (finalPositionValue < minOrderValue || remainingCapacity <= 0) {
+      logger.info(`Position sizing blocked: Current exposure $${currentExposure.toFixed(2)}, Max allowed $${maxSymbolExposure.toFixed(2)}`);
+      return 0;
+    }
+    
+    const quantity = parseFloat((finalPositionValue / price).toFixed(6));
+    
+    logger.debug(`Position sizing: Base=$${basePositionValue.toFixed(2)}, Current exposure=$${currentExposure.toFixed(2)}, Adjusted=$${finalPositionValue.toFixed(2)}, Qty=${quantity}`);
+    
+    return quantity;
   }
 
   getStrategyState() {

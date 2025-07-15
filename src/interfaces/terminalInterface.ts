@@ -86,6 +86,7 @@ export class TerminalInterface {
     const choices = [
       'Start Trading',
       'View Configuration',
+      'Check Account Balance',
       'View Account Status',
       'Run Backtest',
       'Live Monitor',
@@ -106,6 +107,9 @@ export class TerminalInterface {
         break;
       case 'View Configuration':
         await this.viewConfiguration();
+        break;
+      case 'Check Account Balance':
+        await this.checkAccountBalance();
         break;
       case 'View Account Status':
         await this.viewAccountStatus();
@@ -176,6 +180,84 @@ export class TerminalInterface {
       const keyStr = String(key);
       console.log(`${chalk.gray(keyStr.padEnd(20))} : ${chalk.white(value)}`);
     });
+
+    await this.pressAnyKey();
+    await this.showMainMenu();
+  }
+
+  private async checkAccountBalance(): Promise<void> {
+    try {
+      this.logInfo('Fetching current balance...');
+      
+      const isConnected = await this.binanceService.validateConnection();
+      if (!isConnected) {
+        this.logError('Failed to connect to Binance API');
+        await this.pressAnyKey();
+        await this.showMainMenu();
+        return;
+      }
+
+      // Get balances for all major assets
+      const usdtBalance = await this.binanceService.getAccountBalance('USDT');
+      const btcBalance = await this.binanceService.getAccountBalance('BTC').catch(() => 0);
+      const ethBalance = await this.binanceService.getAccountBalance('ETH').catch(() => 0);
+      const solBalance = await this.binanceService.getAccountBalance('SOL').catch(() => 0);
+      const adaBalance = await this.binanceService.getAccountBalance('ADA').catch(() => 0);
+      const xrpBalance = await this.binanceService.getAccountBalance('XRP').catch(() => 0);
+
+      // Get current prices for portfolio value calculation
+      const btcPrice = btcBalance > 0 ? await this.binanceService.getCurrentPrice('BTCUSDT').catch(() => 0) : 0;
+      const ethPrice = ethBalance > 0 ? await this.binanceService.getCurrentPrice('ETHUSDT').catch(() => 0) : 0;
+      const solPrice = solBalance > 0 ? await this.binanceService.getCurrentPrice('SOLUSDT').catch(() => 0) : 0;
+      const adaPrice = adaBalance > 0 ? await this.binanceService.getCurrentPrice('ADAUSDT').catch(() => 0) : 0;
+      const xrpPrice = xrpBalance > 0 ? await this.binanceService.getCurrentPrice('XRPUSDT').catch(() => 0) : 0;
+
+      // Calculate portfolio values
+      const btcValue = btcBalance * btcPrice;
+      const ethValue = ethBalance * ethPrice;
+      const solValue = solBalance * solPrice;
+      const adaValue = adaBalance * adaPrice;
+      const xrpValue = xrpBalance * xrpPrice;
+      const totalValue = usdtBalance + btcValue + ethValue + solValue + adaValue + xrpValue;
+
+      const envStatus = getBinanceConfig().testnet ? '🧪 TESTNET' : '🚀 LIVE';
+      
+      console.log(chalk.blue(`\n💰 Account Balance Summary (${envStatus}):`));
+      console.log(chalk.white('━'.repeat(60)));
+      
+      // Show USDT balance prominently
+      console.log(`${chalk.yellow('💵 USDT Balance'.padEnd(25))} : ${chalk.green.bold('$' + usdtBalance.toFixed(2))}`);
+      
+      if (btcBalance > 0.001) {
+        console.log(`${chalk.yellow('₿  BTC Balance'.padEnd(25))} : ${chalk.white(btcBalance.toFixed(6) + ' BTC')} ${chalk.gray('($' + btcValue.toFixed(2) + ')')}`);
+      }
+      if (ethBalance > 0.01) {
+        console.log(`${chalk.blue('♦  ETH Balance'.padEnd(25))} : ${chalk.white(ethBalance.toFixed(6) + ' ETH')} ${chalk.gray('($' + ethValue.toFixed(2) + ')')}`);
+      }
+      if (solBalance > 0.1) {
+        console.log(`${chalk.magenta('🔮 SOL Balance'.padEnd(25))} : ${chalk.white(solBalance.toFixed(6) + ' SOL')} ${chalk.gray('($' + solValue.toFixed(2) + ')')}`);
+      }
+      if (adaBalance > 1) {
+        console.log(`${chalk.cyan('💙 ADA Balance'.padEnd(25))} : ${chalk.white(adaBalance.toFixed(6) + ' ADA')} ${chalk.gray('($' + adaValue.toFixed(2) + ')')}`);
+      }
+      if (xrpBalance > 1) {
+        console.log(`${chalk.blue('💧 XRP Balance'.padEnd(25))} : ${chalk.white(xrpBalance.toFixed(6) + ' XRP')} ${chalk.gray('($' + xrpValue.toFixed(2) + ')')}`);
+      }
+      
+      console.log(chalk.white('━'.repeat(60)));
+      console.log(`${chalk.yellow.bold('📊 Total Portfolio Value'.padEnd(25))} : ${chalk.green.bold('$' + totalValue.toFixed(2))}`);
+      
+      // Show trading capital configuration
+      console.log(chalk.blue('\n⚙️  Trading Configuration:'));
+      console.log(chalk.white('━'.repeat(60)));
+      console.log(`${chalk.gray('Configured Capital'.padEnd(25))} : ${chalk.white('$' + config.initialCapital.toFixed(2))}`);
+      console.log(`${chalk.gray('Daily Profit Target'.padEnd(25))} : ${chalk.green('$' + config.dailyProfitTarget.toFixed(2) + ' (' + ((config.dailyProfitTarget / config.initialCapital) * 100).toFixed(1) + '%)')}`);
+      console.log(`${chalk.gray('Max Daily Loss'.padEnd(25))} : ${chalk.red('$' + config.maxDailyLoss.toFixed(2) + ' (' + ((config.maxDailyLoss / config.initialCapital) * 100).toFixed(1) + '%)')}`);
+      console.log(`${chalk.gray('Position Size'.padEnd(25))} : ${chalk.white(config.positionSizePercentage + '% ≈ $' + ((config.initialCapital * config.positionSizePercentage) / 100).toFixed(2))}`);
+
+    } catch (error) {
+      this.logError(`Failed to fetch balance: ${error}`);
+    }
 
     await this.pressAnyKey();
     await this.showMainMenu();

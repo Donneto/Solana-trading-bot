@@ -95,14 +95,19 @@ export function getProductionCoinProfile(symbol: string): CoinProfile {
   }
 }
 
-export function createProductionConfig(tradingSymbol: string): TradingConfig {
+export function createProductionConfig(tradingSymbol: string, actualBalance?: number): TradingConfig {
   const coinProfile = getProductionCoinProfile(tradingSymbol);
+  
+  // REQUIRE actual balance - no fallbacks for production safety
+  if (!actualBalance) {
+    throw new Error('Actual account balance is required for production - no fallback values allowed');
+  }
   
   return {
     symbol: tradingSymbol,
-    initialCapital: parseFloat(process.env.INITIAL_CAPITAL || '300'),
-    dailyProfitTarget: parseFloat(process.env.DAILY_PROFIT_TARGET || '12'),
-    maxDailyLoss: parseFloat(process.env.MAX_DAILY_LOSS || '30'),
+    initialCapital: actualBalance,
+    dailyProfitTarget: actualBalance * 0.04, // 4% of actual balance
+    maxDailyLoss: actualBalance * 0.10, // 10% of actual balance
     
     strategy: coinProfile.strategy,
     positionSizePercentage: parseFloat(process.env.POSITION_SIZE_PERCENTAGE || coinProfile.positionSizePercentage.toString()),
