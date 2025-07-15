@@ -2,11 +2,10 @@ import winston from 'winston';
 import fs from 'fs';
 import path from 'path';
 
-// Environment context detection - now dynamic
+// Environment context detection - uses new TRADING_ENV system
 function getEnvironmentContext(): string {
-  // Check new environment system first, then fallback to legacy
-  const tradingEnv = process.env.TRADING_ENV;
-  const isTestnet = tradingEnv === 'testnet' || process.env.BINANCE_TESTNET === 'true';
+  const tradingEnv = process.env.TRADING_ENV || 'testnet';
+  const isTestnet = tradingEnv === 'testnet';
   const nodeEnv = process.env.NODE_ENV || 'development';
   
   // Get the symbol from environment, fallback to detecting from config
@@ -144,11 +143,8 @@ export let logger = getLoggerForSymbol();
 
 // Function to refresh logger when trading symbol changes
 export function refreshLogger(): void {
-  // Clear the old logger from cache to force recreation
-  const currentSymbol = getCurrentSymbol();
-  if (loggerCache.has(currentSymbol)) {
-    loggerCache.delete(currentSymbol);
-  }
+  // Clear ALL loggers from cache to force recreation with new symbol
+  loggerCache.clear();
   // Re-export the logger with new symbol
   logger = getLoggerForSymbol();
 }

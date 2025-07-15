@@ -98,10 +98,12 @@ npm test
 Edit `.env` file with your settings:
 
 ```env
+# Environment Selection
+TRADING_ENV=testnet  # Set to 'production' for live trading
+
 # Binance API (REQUIRED)
 BINANCE_API_KEY=your_api_key_here
 BINANCE_API_SECRET=your_secret_here
-BINANCE_TESTNET=true  # Set to false for live trading
 
 # Trading Parameters
 TRADING_SYMBOL=SOLUSDT

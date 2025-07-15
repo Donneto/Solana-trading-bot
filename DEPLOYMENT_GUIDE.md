@@ -49,9 +49,9 @@ npm run build
    cp testnet.env .env
    
    # Edit .env with your testnet credentials
+   TRADING_ENV=testnet
    BINANCE_API_KEY=your_testnet_api_key
    BINANCE_API_SECRET=your_testnet_secret
-   BINANCE_TESTNET=true
    ```
 
 3. **Testnet Configuration Summary**:
@@ -79,9 +79,9 @@ npm run build
    cp .env.example .env
    
    # Edit .env with your live credentials
+   TRADING_ENV=production
    BINANCE_API_KEY=your_live_api_key
    BINANCE_API_SECRET=your_live_secret
-   BINANCE_TESTNET=false
    ```
 
 3. **Live Configuration Summary**:
@@ -119,9 +119,9 @@ nano .env  # or use your preferred editor
 # ========================
 # BINANCE API (REQUIRED)
 # ========================
+TRADING_ENV=testnet  # IMPORTANT: Start with testnet!
 BINANCE_API_KEY=your_actual_api_key_here
 BINANCE_API_SECRET=your_actual_secret_here
-BINANCE_TESTNET=true  # IMPORTANT: Start with testnet!
 
 # ========================
 # TRADING PARAMETERS
@@ -159,7 +159,7 @@ npm run dev
 ### **4.1 Enable Testnet Mode**
 ```env
 # In .env file
-BINANCE_TESTNET=true
+TRADING_ENV=testnet
 ```
 
 ### **4.2 Get Testnet Credentials**
@@ -199,7 +199,7 @@ npm run dev
 ### **5.1 Switch to Live Trading**
 ```env
 # In .env file - CHANGE THIS CAREFULLY
-BINANCE_TESTNET=false
+TRADING_ENV=production
 
 # Update with LIVE API credentials
 BINANCE_API_KEY=your_live_api_key
