@@ -11,6 +11,7 @@ describe('RiskManager', () => {
       initialCapital: 300,
       dailyProfitTarget: 12,
       maxDailyLoss: 30,
+      strategy: 'meanReversion',
       positionSizePercentage: 10,
       stopLossPercentage: 2,
       takeProfitPercentage: 3,
@@ -18,8 +19,8 @@ describe('RiskManager', () => {
       maxOpenPositions: 3,
       meanReversionPeriod: 20,
       deviationThreshold: 2,
-      gridLevels: 5,
-      gridSpacingPercentage: 0.5,
+      gridLevels: 8,
+      gridSpacingPercentage: 1,
       fearGreedIndexEnabled: false
     };
     

@@ -127,25 +127,77 @@ export class BinanceService extends EventEmitter {
     }
   }
 
+  private symbolInfoCache: Map<string, any> = new Map();
+
+  private async getSymbolInfo(symbol: string): Promise<any> {
+    if (this.symbolInfoCache.has(symbol)) {
+      return this.symbolInfoCache.get(symbol);
+    }
+
+    try {
+      const exchangeInfo = await this.client.exchangeInfo();
+      const symbolInfo = exchangeInfo.symbols.find((s: any) => s.symbol === symbol);
+      
+      if (symbolInfo) {
+        this.symbolInfoCache.set(symbol, symbolInfo);
+        return symbolInfo;
+      }
+      
+      throw new Error(`Symbol ${symbol} not found`);
+    } catch (error) {
+      TradingLogger.logError(error as Error, { context: 'BinanceService.getSymbolInfo' });
+      throw new Error('Failed to get symbol info');
+    }
+  }
+
+  private async formatQuantity(symbol: string, quantity: number): Promise<string> {
+    try {
+      const symbolInfo = await this.getSymbolInfo(symbol);
+      const lotSizeFilter = symbolInfo.filters.find((f: any) => f.filterType === 'LOT_SIZE');
+      
+      if (lotSizeFilter) {
+        const stepSize = parseFloat(lotSizeFilter.stepSize);
+        const minQty = parseFloat(lotSizeFilter.minQty);
+        
+        // Adjust quantity to match step size
+        const adjustedQty = Math.floor(quantity / stepSize) * stepSize;
+        
+        if (adjustedQty < minQty) {
+          throw new Error(`Quantity ${adjustedQty} is below minimum ${minQty} for ${symbol}`);
+        }
+        
+        // Format to the correct number of decimal places
+        const precision = stepSize.toString().split('.')[1]?.length || 0;
+        return adjustedQty.toFixed(precision);
+      }
+      
+      // Fallback if no LOT_SIZE filter found
+      return quantity.toFixed(6);
+    } catch (error) {
+      TradingLogger.logError(error as Error, { context: 'BinanceService.formatQuantity' });
+      throw error;
+    }
+  }
+
   async placeMarketOrder(symbol: string, side: 'BUY' | 'SELL', quantity: number): Promise<any> {
     try {
-      // Validate order parameters
-      const orderValue = quantity * (await this.getCurrentPrice(symbol));
-      const minOrderValue = 10; // Binance minimum order value
-      
-      if (orderValue < minOrderValue) {
-        throw new Error(`Order value ${orderValue.toFixed(2)} below minimum ${minOrderValue}`);
+      // Validate inputs
+      if (!symbol || !side || !quantity || quantity <= 0) {
+        throw new Error(`Invalid order parameters: symbol=${symbol}, side=${side}, quantity=${quantity}`);
       }
-      
-      if (quantity <= 0) {
+
+      if (isNaN(quantity) || !isFinite(quantity)) {
         throw new Error(`Invalid quantity: ${quantity}`);
       }
+
+      // Format quantity according to symbol's LOT_SIZE filter
+      const formattedQuantity = await this.formatQuantity(symbol, quantity);
 
       const order = await this.client.order({
         symbol,
         side,
         type: 'MARKET',
-        quantity: quantity.toFixed(6)
+        quantity: formattedQuantity
       });
       
       // Check for slippage if price data available
@@ -183,15 +235,53 @@ export class BinanceService extends EventEmitter {
     }
   }
 
+  private async formatPrice(symbol: string, price: number): Promise<string> {
+    try {
+      const symbolInfo = await this.getSymbolInfo(symbol);
+      const priceFilter = symbolInfo.filters.find((f: any) => f.filterType === 'PRICE_FILTER');
+      
+      if (priceFilter) {
+        const tickSize = parseFloat(priceFilter.tickSize);
+        const minPrice = parseFloat(priceFilter.minPrice);
+        const maxPrice = parseFloat(priceFilter.maxPrice);
+        
+        // Adjust price to match tick size
+        const adjustedPrice = Math.round(price / tickSize) * tickSize;
+        
+        if (adjustedPrice < minPrice) {
+          throw new Error(`Price ${adjustedPrice} is below minimum ${minPrice} for ${symbol}`);
+        }
+        
+        if (adjustedPrice > maxPrice) {
+          throw new Error(`Price ${adjustedPrice} is above maximum ${maxPrice} for ${symbol}`);
+        }
+        
+        // Format to the correct number of decimal places
+        const precision = tickSize.toString().split('.')[1]?.length || 0;
+        return adjustedPrice.toFixed(precision);
+      }
+      
+      // Fallback if no PRICE_FILTER found
+      return price.toFixed(6);
+    } catch (error) {
+      TradingLogger.logError(error as Error, { context: 'BinanceService.formatPrice' });
+      throw error;
+    }
+  }
+
   async placeStopLossOrder(symbol: string, side: 'BUY' | 'SELL', quantity: number, stopPrice: number): Promise<any> {
     try {
+      // Format quantity and price according to symbol filters
+      const formattedQuantity = await this.formatQuantity(symbol, quantity);
+      const formattedPrice = await this.formatPrice(symbol, stopPrice);
+
       const order = await this.client.order({
         symbol,
         side,
         type: 'STOP_LOSS_LIMIT',
-        quantity: quantity.toFixed(6),
-        price: stopPrice.toFixed(6),
-        stopPrice: stopPrice.toFixed(6),
+        quantity: formattedQuantity,
+        price: formattedPrice,
+        stopPrice: formattedPrice,
         timeInForce: 'GTC'
       });
       
@@ -216,12 +306,16 @@ export class BinanceService extends EventEmitter {
 
   async placeTakeProfitOrder(symbol: string, side: 'BUY' | 'SELL', quantity: number, targetPrice: number): Promise<any> {
     try {
+      // Format quantity and price according to symbol filters
+      const formattedQuantity = await this.formatQuantity(symbol, quantity);
+      const formattedPrice = await this.formatPrice(symbol, targetPrice);
+
       const order = await this.client.order({
         symbol,
         side,
         type: 'LIMIT',
-        quantity: quantity.toFixed(6),
-        price: targetPrice.toFixed(6),
+        quantity: formattedQuantity,
+        price: formattedPrice,
         timeInForce: 'GTC'
       });
       

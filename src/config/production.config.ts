@@ -3,6 +3,7 @@ import { TradingConfig, BinanceCredentials, FearGreedConfig } from '../interface
 interface CoinProfile {
   symbol: string;
   volatility: 'low' | 'medium' | 'high';
+  strategy: 'meanReversion' | 'gridTrading' | 'momentum';
   meanReversionPeriod: number;
   deviationThreshold: number;
   stopLossPercentage: number;
@@ -10,13 +11,16 @@ interface CoinProfile {
   trailingStopPercentage: number;
   positionSizePercentage: number;
   maxOpenPositions: number;
-  description: string;
+  gridLevels: number;
+  gridSpacingPercentage: number;
+  description?: string;
 }
 
 export const productionCoinProfiles: Record<string, CoinProfile> = {
   'BTCUSDT': {
     symbol: 'BTCUSDT',
     volatility: 'low',
+    strategy: 'meanReversion',
     meanReversionPeriod: 14,
     deviationThreshold: 1.5,
     stopLossPercentage: 1.5,
@@ -24,11 +28,14 @@ export const productionCoinProfiles: Record<string, CoinProfile> = {
     trailingStopPercentage: 1.0,
     positionSizePercentage: 10,
     maxOpenPositions: 2,
+    gridLevels: 6,
+    gridSpacingPercentage: 1.0,
     description: 'Production Bitcoin - conservative settings for live trading'
   },
   'SOLUSDT': {
     symbol: 'SOLUSDT',
     volatility: 'medium',
+    strategy: 'gridTrading',
     meanReversionPeriod: 20,
     deviationThreshold: 2.0,
     stopLossPercentage: 2.0,
@@ -36,11 +43,14 @@ export const productionCoinProfiles: Record<string, CoinProfile> = {
     trailingStopPercentage: 1.5,
     positionSizePercentage: 8,
     maxOpenPositions: 2,
-    description: 'Production Solana - balanced risk for live trading'
+    gridLevels: 8,
+    gridSpacingPercentage: 1.2,
+    description: 'Production Solana - grid trading for live trading'
   },
   'ADAUSDT': {
     symbol: 'ADAUSDT',
     volatility: 'high',
+    strategy: 'momentum',
     meanReversionPeriod: 25,
     deviationThreshold: 2.2,
     stopLossPercentage: 2.0,
@@ -48,11 +58,14 @@ export const productionCoinProfiles: Record<string, CoinProfile> = {
     trailingStopPercentage: 1.8,
     positionSizePercentage: 6,
     maxOpenPositions: 3,
-    description: 'Production Cardano - controlled volatility for live trading'
+    gridLevels: 6,
+    gridSpacingPercentage: 1.5,
+    description: 'Production Cardano - momentum strategy for live trading'
   },
   'XRPUSDT': {
     symbol: 'XRPUSDT',
     volatility: 'high',
+    strategy: 'meanReversion',
     meanReversionPeriod: 22,
     deviationThreshold: 2.1,
     stopLossPercentage: 1.8,
@@ -60,7 +73,9 @@ export const productionCoinProfiles: Record<string, CoinProfile> = {
     trailingStopPercentage: 1.6,
     positionSizePercentage: 7,
     maxOpenPositions: 3,
-    description: 'Production XRP - conservative approach for regulatory volatility'
+    gridLevels: 6,
+    gridSpacingPercentage: 1.3,
+    description: 'Production XRP - conservative live trading'
   }
 };
 
@@ -89,6 +104,7 @@ export function createProductionConfig(tradingSymbol: string): TradingConfig {
     dailyProfitTarget: parseFloat(process.env.DAILY_PROFIT_TARGET || '12'),
     maxDailyLoss: parseFloat(process.env.MAX_DAILY_LOSS || '30'),
     
+    strategy: coinProfile.strategy,
     positionSizePercentage: parseFloat(process.env.POSITION_SIZE_PERCENTAGE || coinProfile.positionSizePercentage.toString()),
     stopLossPercentage: parseFloat(process.env.STOP_LOSS_PERCENTAGE || coinProfile.stopLossPercentage.toString()),
     takeProfitPercentage: parseFloat(process.env.TAKE_PROFIT_PERCENTAGE || coinProfile.takeProfitPercentage.toString()),
@@ -97,8 +113,8 @@ export function createProductionConfig(tradingSymbol: string): TradingConfig {
     
     meanReversionPeriod: parseInt(process.env.MEAN_REVERSION_PERIOD || coinProfile.meanReversionPeriod.toString()),
     deviationThreshold: parseFloat(process.env.DEVIATION_THRESHOLD || coinProfile.deviationThreshold.toString()),
-    gridLevels: parseInt(process.env.GRID_LEVELS || '5'),
-    gridSpacingPercentage: parseFloat(process.env.GRID_SPACING_PERCENTAGE || '0.5'),
+    gridLevels: parseInt(process.env.GRID_LEVELS || coinProfile.gridLevels.toString()),
+    gridSpacingPercentage: parseFloat(process.env.GRID_SPACING_PERCENTAGE || coinProfile.gridSpacingPercentage.toString()),
     
     fearGreedIndexEnabled: process.env.FEAR_GREED_INDEX_ENABLED === 'true',
   };

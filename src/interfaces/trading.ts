@@ -10,10 +10,22 @@ export interface TradingConfig {
   trailingStopPercentage: number;
   maxOpenPositions: number;
   
+  // Strategy selection
+  strategy: 'meanReversion' | 'gridTrading' | 'momentum';
+  
+  // Mean reversion parameters
   meanReversionPeriod: number;
   deviationThreshold: number;
+  
+  // Grid trading parameters
   gridLevels: number;
   gridSpacingPercentage: number;
+  
+  // Momentum parameters (using existing config fields where possible)
+  // momentumPeriod uses meanReversionPeriod
+  // emaFastPeriod: 12 (hardcoded)
+  // emaSlowPeriod: 26 (hardcoded)
+  // macdSignalPeriod: 9 (hardcoded)
   
   fearGreedIndexEnabled: boolean;
 }

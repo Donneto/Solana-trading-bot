@@ -3,6 +3,7 @@ import { TradingConfig, BinanceCredentials, FearGreedConfig } from '../interface
 interface CoinProfile {
   symbol: string;
   volatility: 'low' | 'medium' | 'high';
+  strategy: 'meanReversion' | 'gridTrading' | 'momentum';
   meanReversionPeriod: number;
   deviationThreshold: number;
   stopLossPercentage: number;
@@ -10,57 +11,71 @@ interface CoinProfile {
   trailingStopPercentage: number;
   positionSizePercentage: number;
   maxOpenPositions: number;
-  description: string;
+  gridLevels: number;
+  gridSpacingPercentage: number;
+  description?: string;
 }
 
 export const testnetCoinProfiles: Record<string, CoinProfile> = {
   'BTCUSDT': {
     symbol: 'BTCUSDT',
     volatility: 'low',
+    strategy: 'momentum',
     meanReversionPeriod: 12,
     deviationThreshold: 1.5,
-    stopLossPercentage: 4.0,
-    takeProfitPercentage: 6.0,
-    trailingStopPercentage: 3.0,
-    positionSizePercentage: 35,
-    maxOpenPositions: 6,
-    description: 'Testnet Bitcoin - aggressive for strategy validation'
+    stopLossPercentage: 3.0,
+    takeProfitPercentage: 4.5,
+    trailingStopPercentage: 2.0,
+    positionSizePercentage: 15,
+    maxOpenPositions: 4,
+    gridLevels: 8,
+    gridSpacingPercentage: 1.2,
+    description: 'Testnet Bitcoin - momentum strategy for trend following'
   },
   'SOLUSDT': {
     symbol: 'SOLUSDT',
     volatility: 'medium',
+    strategy: 'gridTrading',
     meanReversionPeriod: 18,
     deviationThreshold: 2.0,
-    stopLossPercentage: 5.0,
-    takeProfitPercentage: 7.0,
-    trailingStopPercentage: 3.5,
-    positionSizePercentage: 30,
-    maxOpenPositions: 7,
-    description: 'Testnet Solana - high risk for strategy testing'
+    stopLossPercentage: 3.5,
+    takeProfitPercentage: 5.0,
+    trailingStopPercentage: 2.5,
+    positionSizePercentage: 12,
+    maxOpenPositions: 5,
+    gridLevels: 10,
+    gridSpacingPercentage: 1.5,
+    description: 'Testnet Solana - grid trading for volatility capture ($10K scale)'
   },
   'ADAUSDT': {
     symbol: 'ADAUSDT',
     volatility: 'high',
+    strategy: 'momentum',
     meanReversionPeriod: 22,
     deviationThreshold: 2.5,
-    stopLossPercentage: 6.0,
-    takeProfitPercentage: 8.0,
-    trailingStopPercentage: 4.0,
-    positionSizePercentage: 25,
-    maxOpenPositions: 8,
-    description: 'Testnet Cardano - maximum risk for validation'
+    stopLossPercentage: 4.0,
+    takeProfitPercentage: 6.0,
+    trailingStopPercentage: 3.0,
+    positionSizePercentage: 10,
+    maxOpenPositions: 6,
+    gridLevels: 8,
+    gridSpacingPercentage: 2.0,
+    description: 'Testnet Cardano - momentum strategy for trend following ($10K scale)'
   },
   'XRPUSDT': {
     symbol: 'XRPUSDT',
     volatility: 'high',
+    strategy: 'meanReversion',
     meanReversionPeriod: 20,
     deviationThreshold: 2.3,
-    stopLossPercentage: 5.5,
-    takeProfitPercentage: 7.5,
-    trailingStopPercentage: 3.8,
-    positionSizePercentage: 28,
-    maxOpenPositions: 7,
-    description: 'Testnet XRP - aggressive volatility settings for testing'
+    stopLossPercentage: 4.5,
+    takeProfitPercentage: 6.5,
+    trailingStopPercentage: 3.0,
+    positionSizePercentage: 13,
+    maxOpenPositions: 5,
+    gridLevels: 9,
+    gridSpacingPercentage: 1.8,
+    description: 'Testnet XRP - moderate volatility settings for $10K testing'
   }
 };
 
@@ -85,10 +100,11 @@ export function createTestnetConfig(tradingSymbol: string): TradingConfig {
   
   return {
     symbol: tradingSymbol,
-    initialCapital: parseFloat(process.env.INITIAL_CAPITAL || '50000'),
-    dailyProfitTarget: parseFloat(process.env.DAILY_PROFIT_TARGET || '1000'),
-    maxDailyLoss: parseFloat(process.env.MAX_DAILY_LOSS || '2500'),
+    initialCapital: parseFloat(process.env.INITIAL_CAPITAL || '10000'),
+    dailyProfitTarget: parseFloat(process.env.DAILY_PROFIT_TARGET || '200'),
+    maxDailyLoss: parseFloat(process.env.MAX_DAILY_LOSS || '500'),
     
+    strategy: coinProfile.strategy,
     positionSizePercentage: parseFloat(process.env.POSITION_SIZE_PERCENTAGE || coinProfile.positionSizePercentage.toString()),
     stopLossPercentage: parseFloat(process.env.STOP_LOSS_PERCENTAGE || coinProfile.stopLossPercentage.toString()),
     takeProfitPercentage: parseFloat(process.env.TAKE_PROFIT_PERCENTAGE || coinProfile.takeProfitPercentage.toString()),
@@ -97,8 +113,8 @@ export function createTestnetConfig(tradingSymbol: string): TradingConfig {
     
     meanReversionPeriod: parseInt(process.env.MEAN_REVERSION_PERIOD || coinProfile.meanReversionPeriod.toString()),
     deviationThreshold: parseFloat(process.env.DEVIATION_THRESHOLD || coinProfile.deviationThreshold.toString()),
-    gridLevels: parseInt(process.env.GRID_LEVELS || '8'),
-    gridSpacingPercentage: parseFloat(process.env.GRID_SPACING_PERCENTAGE || '0.8'),
+    gridLevels: parseInt(process.env.GRID_LEVELS || coinProfile.gridLevels.toString()),
+    gridSpacingPercentage: parseFloat(process.env.GRID_SPACING_PERCENTAGE || coinProfile.gridSpacingPercentage.toString()),
     
     fearGreedIndexEnabled: process.env.FEAR_GREED_INDEX_ENABLED === 'true',
   };

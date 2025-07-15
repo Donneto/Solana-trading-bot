@@ -11,6 +11,7 @@ describe('TradingSafeguards', () => {
       initialCapital: 300,
       dailyProfitTarget: 12,
       maxDailyLoss: 30,
+      strategy: 'meanReversion',
       positionSizePercentage: 10,
       stopLossPercentage: 2,
       takeProfitPercentage: 3,

@@ -3,13 +3,15 @@ import { v4 as uuidv4 } from 'uuid';
 import { BinanceService } from '../services/binance/binanceService';
 import { RiskManager } from '../services/risk/riskManager';
 import { MeanReversionStrategy } from '../strategies/meanReversion/meanReversionStrategy';
+import { GridTradingStrategy } from '../strategies/gridTrading/gridTradingStrategy';
+import { MomentumStrategy } from '../strategies/momentum/momentumStrategy';
 import { Position, TradingSignal, MarketData, TradingConfig } from '../interfaces/trading';
 import { logger, TradingLogger } from '../utils/logger';
 
 export class TradingEngine extends EventEmitter {
   private binanceService: BinanceService;
   private riskManager: RiskManager;
-  private strategy: MeanReversionStrategy;
+  private strategy: MeanReversionStrategy | GridTradingStrategy | MomentumStrategy;
   private config: TradingConfig;
   
   private isRunning: boolean = false;
@@ -26,9 +28,23 @@ export class TradingEngine extends EventEmitter {
     this.binanceService = binanceService;
     this.config = config;
     this.riskManager = new RiskManager(config);
-    this.strategy = new MeanReversionStrategy(config);
+    this.strategy = this.createStrategy(config);
     
     this.setupEventListeners();
+  }
+
+  private createStrategy(config: TradingConfig): MeanReversionStrategy | GridTradingStrategy | MomentumStrategy {
+    switch (config.strategy) {
+      case 'meanReversion':
+        return new MeanReversionStrategy(config);
+      case 'gridTrading':
+        return new GridTradingStrategy(config);
+      case 'momentum':
+        return new MomentumStrategy(config);
+      default:
+        logger.warn(`Unknown strategy: ${config.strategy}, defaulting to mean reversion`);
+        return new MeanReversionStrategy(config);
+    }
   }
 
   private setupEventListeners(): void {
@@ -69,7 +85,7 @@ export class TradingEngine extends EventEmitter {
       logger.info('Trading engine started successfully', {
         symbol: this.config.symbol,
         balance: this.currentBalance,
-        strategy: 'Mean Reversion'
+        strategy: this.config.strategy
       });
 
       this.emit('started');
@@ -425,7 +441,7 @@ export class TradingEngine extends EventEmitter {
     }
   }
 
-  private async cancelOrdersForPosition(positionId: string): Promise<void> {
+  private async cancelOrdersForPosition(_positionId: string): Promise<void> {
     // This is a simplified implementation
     // In a production system, you'd track which orders belong to which positions
     const openOrders = await this.binanceService.getOpenOrders(this.config.symbol);

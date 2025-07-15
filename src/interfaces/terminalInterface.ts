@@ -269,12 +269,13 @@ export class TerminalInterface {
     // Clear previous display
     process.stdout.write('\x1B[2J\x1B[0f');
     
-    // Header with ticker and environment
+    // Header with ticker, strategy, and environment
     const envStatus = getBinanceConfig().testnet ? chalk.yellow('🧪 TESTNET') : chalk.red('🚀 LIVE');
     const ticker = chalk.cyan(config.symbol);
+    const strategyName = this.getStrategyDisplayName(config.strategy);
     
     console.log(chalk.blue('🎯 Live Trading Monitor') + chalk.gray(` - ${new Date().toLocaleTimeString()}`));
-    console.log(`${envStatus} | Trading: ${ticker} | ${chalk.gray('Press Ctrl+C to exit')}`);
+    console.log(`${envStatus} | Trading: ${ticker} | Strategy: ${strategyName} | ${chalk.gray('Press Ctrl+C to exit')}`);
     console.log(chalk.white('═'.repeat(80)));
 
     // Engine Status
@@ -346,17 +347,13 @@ export class TerminalInterface {
 
     // Strategy State
     const strategyState = this.tradingEngine.getStrategyState();
-    console.log('\n' + chalk.blue('🧠 Strategy State:'));
+    console.log('\n' + chalk.blue(`🧠 ${config.strategy} Strategy State:`));
     console.log(chalk.white('─'.repeat(40)));
     console.log(`${chalk.gray('Price History')}    : ${chalk.white(strategyState.priceHistoryLength + ' candles')}`);
     console.log(`${chalk.gray('Last Price')}       : ${chalk.white('$' + (strategyState.lastPrice || 0).toFixed(2))}`);
     
-    if (strategyState.indicators) {
-      console.log(`${chalk.gray('SMA')}              : ${chalk.white('$' + strategyState.indicators.sma.toFixed(2))}`);
-      console.log(`${chalk.gray('Upper Band')}       : ${chalk.white('$' + strategyState.indicators.bollinger.upper.toFixed(2))}`);
-      console.log(`${chalk.gray('Lower Band')}       : ${chalk.white('$' + strategyState.indicators.bollinger.lower.toFixed(2))}`);
-      console.log(`${chalk.gray('RSI')}              : ${chalk.white(strategyState.indicators.rsi.toFixed(1))}`);
-    }
+    // Strategy-specific indicators
+    this.displayStrategySpecificData(config.strategy, strategyState);
 
     // Fear and Greed Service Health (only if enabled)
     if (config.fearGreedIndexEnabled) {
@@ -372,6 +369,79 @@ export class TerminalInterface {
     }
 
     console.log('\n' + chalk.gray('Press Ctrl+C to return to main menu'));
+  }
+
+  private getStrategyDisplayName(strategy: string): string {
+    switch (strategy) {
+      case 'meanReversion':
+        return chalk.magenta('📈 Mean Reversion');
+      case 'gridTrading':
+        return chalk.green('🌐 Grid Trading');
+      case 'momentum':
+        return chalk.blue('🚀 Momentum');
+      default:
+        return chalk.gray('❓ Unknown');
+    }
+  }
+
+  private displayStrategySpecificData(strategy: string, strategyState: any): void {
+    switch (strategy) {
+      case 'meanReversion':
+        this.displayMeanReversionData(strategyState);
+        break;
+      case 'gridTrading':
+        this.displayGridTradingData(strategyState);
+        break;
+      case 'momentum':
+        this.displayMomentumData(strategyState);
+        break;
+      default:
+        console.log(`${chalk.gray('Strategy')}         : ${chalk.white('Unknown')}`);
+    }
+  }
+
+  private displayMeanReversionData(strategyState: any): void {
+    if (strategyState.indicators) {
+      console.log(`${chalk.gray('SMA')}              : ${chalk.white('$' + (strategyState.indicators.sma || 0).toFixed(2))}`);
+      if (strategyState.indicators.bollinger) {
+        console.log(`${chalk.gray('Upper Band')}       : ${chalk.white('$' + (strategyState.indicators.bollinger.upper || 0).toFixed(2))}`);
+        console.log(`${chalk.gray('Lower Band')}       : ${chalk.white('$' + (strategyState.indicators.bollinger.lower || 0).toFixed(2))}`);
+      }
+      console.log(`${chalk.gray('RSI')}              : ${chalk.white((strategyState.indicators.rsi || 0).toFixed(1))}`);
+      console.log(`${chalk.gray('Std Deviation')}    : ${chalk.white((strategyState.indicators.standardDeviation || 0).toFixed(4))}`);
+    }
+  }
+
+  private displayGridTradingData(strategyState: any): void {
+    console.log(`${chalk.gray('Grid Initialized')}  : ${strategyState.gridInitialized ? chalk.green('YES') : chalk.yellow('NO')}`);
+    if (strategyState.gridState) {
+      console.log(`${chalk.gray('Base Price')}       : ${chalk.white('$' + (strategyState.gridState.basePrice || 0).toFixed(2))}`);
+      console.log(`${chalk.gray('Active Levels')}    : ${chalk.white(strategyState.activeLevels || 0)}`);
+      console.log(`${chalk.gray('Total Invested')}   : ${chalk.white('$' + (strategyState.gridState.totalInvested || 0).toFixed(2))}`);
+      console.log(`${chalk.gray('Total Profit')}     : ${chalk.white('$' + (strategyState.gridState.totalProfit || 0).toFixed(2))}`);
+      console.log(`${chalk.gray('Active Orders')}    : ${chalk.white(strategyState.gridState.activeOrders || 0)}`);
+    }
+  }
+
+  private displayMomentumData(strategyState: any): void {
+    if (strategyState.trendState) {
+      const trendColor = strategyState.trendState.direction === 'UP' ? chalk.green : 
+                        strategyState.trendState.direction === 'DOWN' ? chalk.red : chalk.yellow;
+      console.log(`${chalk.gray('Trend Direction')}  : ${trendColor(strategyState.trendState.direction)}`);
+      console.log(`${chalk.gray('Trend Strength')}   : ${chalk.white(strategyState.trendState.strength.toFixed(2))}`);
+      console.log(`${chalk.gray('Trend Duration')}   : ${chalk.white(this.formatDuration(strategyState.trendState.duration))}`);
+    }
+    if (strategyState.indicators) {
+      console.log(`${chalk.gray('EMA 12')}           : ${chalk.white('$' + (strategyState.indicators.ema12 || 0).toFixed(2))}`);
+      console.log(`${chalk.gray('EMA 26')}           : ${chalk.white('$' + (strategyState.indicators.ema26 || 0).toFixed(2))}`);
+      console.log(`${chalk.gray('MACD')}             : ${chalk.white((strategyState.indicators.macd || 0).toFixed(4))}`);
+      console.log(`${chalk.gray('RSI')}              : ${chalk.white((strategyState.indicators.rsi || 0).toFixed(1))}`);
+      console.log(`${chalk.gray('ADX')}              : ${chalk.white((strategyState.indicators.adx || 0).toFixed(1))}`);
+      
+      const trendStrengthColor = strategyState.indicators.trendStrength?.includes('STRONG') ? chalk.green :
+                               strategyState.indicators.trendStrength?.includes('WEAK') ? chalk.yellow : chalk.gray;
+      console.log(`${chalk.gray('Trend Strength')}   : ${trendStrengthColor(strategyState.indicators.trendStrength || 'NEUTRAL')}`);
+    }
   }
 
   private async fetchFearGreedIndex() {

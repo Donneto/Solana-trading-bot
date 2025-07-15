@@ -15,6 +15,7 @@ describe('MeanReversionStrategy with Fear and Greed Index', () => {
       initialCapital: 1000,
       dailyProfitTarget: 50,
       maxDailyLoss: 100,
+      strategy: 'meanReversion',
       positionSizePercentage: 10,
       stopLossPercentage: 2,
       takeProfitPercentage: 3,
@@ -23,7 +24,7 @@ describe('MeanReversionStrategy with Fear and Greed Index', () => {
       meanReversionPeriod: 10,
       deviationThreshold: 2,
       gridLevels: 5,
-      gridSpacingPercentage: 0.5,
+      gridSpacingPercentage: 1,
       fearGreedIndexEnabled: true
     };
 
