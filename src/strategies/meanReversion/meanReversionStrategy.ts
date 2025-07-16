@@ -2,6 +2,7 @@ import { EventEmitter } from 'events';
 import { TradingSignal, MarketData, TradingConfig, FearGreedData } from '../../interfaces/trading';
 import { logger, TradingLogger } from '../../utils/logger';
 import { fearGreedService } from '../../services/fearGreed/fearGreedService';
+import { AnalyticsLogger } from '../../utils/analyticsLogger';
 
 interface TechnicalIndicators {
   sma: number;
@@ -20,7 +21,7 @@ export class MeanReversionStrategy extends EventEmitter {
   private volumeHistory: number[] = [];
   private maxHistoryLength: number;
   private lastSignalTime: number = 0;
-  private signalCooldown: number = 60000; // 1 minute cooldown
+  private signalCooldown: number = 15000; // 15 second cooldown for scalping
   private lastLoggedFearGreedValue: number | null = null;
 
   constructor(config: TradingConfig) {
@@ -150,6 +151,21 @@ export class MeanReversionStrategy extends EventEmitter {
     
     // Enforce signal cooldown to prevent overtrading
     if (currentTime - this.lastSignalTime < this.signalCooldown) {
+      AnalyticsLogger.logDecisionMatrix(
+        this.config.symbol,
+        'mean-reversion',
+        marketData.price,
+        [{
+          name: 'Signal Cooldown',
+          current: `${Math.round((currentTime - this.lastSignalTime) / 1000)}s ago`,
+          required: `${this.signalCooldown / 1000}s`,
+          met: false,
+          importance: 'CRITICAL',
+          description: 'Must wait between signals to avoid overtrading'
+        }],
+        'HOLD',
+        0
+      );
       return null;
     }
 
@@ -160,111 +176,249 @@ export class MeanReversionStrategy extends EventEmitter {
     const volatility = indicators.standardDeviation / sma;
     const baseQuantity = this.calculatePositionSize(currentPrice, volatility);
     
-    let signal: TradingSignal | null = null;
-
-    // Mean Reversion Logic
-    if (this.shouldBuy(currentPrice, bollinger, rsi, marketData)) {
-      signal = {
-        action: 'BUY',
-        confidence: this.calculateConfidence(currentPrice, bollinger, rsi, 'BUY', marketData.fearGreedIndex),
-        price: currentPrice,
-        quantity: baseQuantity,
-        reason: this.generateReason(currentPrice, bollinger, rsi, 'BUY', marketData.fearGreedIndex),
-        timestamp: currentTime,
-        stopLoss: currentPrice * (1 - this.config.stopLossPercentage / 100),
-        takeProfit: currentPrice * (1 + this.config.takeProfitPercentage / 100)
-      };
-    } else if (this.shouldSell(currentPrice, bollinger, rsi, marketData)) {
-      signal = {
-        action: 'SELL',
-        confidence: this.calculateConfidence(currentPrice, bollinger, rsi, 'SELL', marketData.fearGreedIndex),
-        price: currentPrice,
-        quantity: baseQuantity,
-        reason: this.generateReason(currentPrice, bollinger, rsi, 'SELL', marketData.fearGreedIndex),
-        timestamp: currentTime,
-        stopLoss: currentPrice * (1 + this.config.stopLossPercentage / 100),
-        takeProfit: currentPrice * (1 - this.config.takeProfitPercentage / 100)
-      };
-    }
-
-    if (signal && signal.confidence >= 70) {
-      this.lastSignalTime = currentTime;
-      return signal;
-    }
-
-    return null;
-  }
-
-  private shouldBuy(price: number, bollinger: any, rsi: number, marketData: MarketData): boolean {
-    // Buy when price touches or breaks below lower Bollinger Band
-    const belowLowerBand = price <= bollinger.lower;
-    
-    // RSI indicates oversold condition
-    const oversold = rsi <= 30;
-    
-    // Price is below SMA (mean reversion opportunity)
-    const belowMean = price < bollinger.middle;
-    
-    // Volume confirmation (higher than average)
+    // Volume analysis
     const avgVolume = this.volumeHistory.length >= 10 
       ? this.volumeHistory.slice(-10).reduce((sum, vol) => sum + vol, 0) / 10
       : marketData.volume;
-    const volumeConfirmation = marketData.volume > avgVolume * 1.2;
-    
-    // Recent downward momentum (for mean reversion)
+    const volumeConfirmation = marketData.volume > avgVolume * 1.00;
+
+    // Recent momentum analysis
     const recentPrices = this.priceHistory.slice(-5);
     const firstPrice = recentPrices[0];
     const lastPrice = recentPrices[recentPrices.length - 1];
     const downwardMomentum = recentPrices.length >= 3 && 
       firstPrice && lastPrice && lastPrice < firstPrice;
-
-    // Fear and Greed Index sentiment check
-    const fearGreedConfirmation = this.getFearGreedConfirmation(marketData.fearGreedIndex, 'BUY');
-
-    const technicalSignal = belowLowerBand && (oversold || belowMean) && volumeConfirmation && !!downwardMomentum;
-    
-    // If Fear and Greed Index is available, use it to filter signals
-    if (marketData.fearGreedIndex) {
-      return technicalSignal && fearGreedConfirmation;
-    }
-
-    return technicalSignal;
-  }
-
-  private shouldSell(price: number, bollinger: any, rsi: number, marketData: MarketData): boolean {
-    // Sell when price touches or breaks above upper Bollinger Band
-    const aboveUpperBand = price >= bollinger.upper;
-    
-    // RSI indicates overbought condition
-    const overbought = rsi >= 70;
-    
-    // Price is above SMA (mean reversion opportunity)
-    const aboveMean = price > bollinger.middle;
-    
-    // Volume confirmation
-    const avgVolume = this.volumeHistory.length >= 10 
-      ? this.volumeHistory.slice(-10).reduce((sum, vol) => sum + vol, 0) / 10
-      : marketData.volume;
-    const volumeConfirmation = marketData.volume > avgVolume * 1.2;
-    
-    // Recent upward momentum (for mean reversion)
-    const recentPrices = this.priceHistory.slice(-5);
-    const firstPrice = recentPrices[0];
-    const lastPrice = recentPrices[recentPrices.length - 1];
     const upwardMomentum = recentPrices.length >= 3 && 
       firstPrice && lastPrice && lastPrice > firstPrice;
 
-    // Fear and Greed Index sentiment check
-    const fearGreedConfirmation = this.getFearGreedConfirmation(marketData.fearGreedIndex, 'SELL');
+    // Fear and Greed analysis
+    const fearGreedBuyConfirmation = this.getFearGreedConfirmation(marketData.fearGreedIndex, 'BUY');
+    const fearGreedSellConfirmation = this.getFearGreedConfirmation(marketData.fearGreedIndex, 'SELL');
 
-    const technicalSignal = aboveUpperBand && (overbought || aboveMean) && volumeConfirmation && !!upwardMomentum;
+    let signal: TradingSignal | null = null;
+    let finalDecision = 'HOLD';
+    let confidence = 0;
+
+    // BUY Analysis
+    const buyConditions = [
+      {
+        name: 'Below Lower Bollinger Band',
+        current: `Price $${currentPrice.toFixed(2)} vs Lower Band $${bollinger.lower.toFixed(2)}`,
+        required: 'Price <= Lower Band',
+        met: currentPrice <= bollinger.lower,
+        importance: 'CRITICAL' as const,
+        description: 'Price touching or below lower Bollinger Band indicates oversold'
+      },
+      {
+        name: 'RSI Oversold',
+        current: rsi.toFixed(1),
+        required: '<= 30 (oversold)',
+        met: rsi <= 30,
+        importance: 'HIGH' as const,
+        description: 'RSI indicates oversold condition'
+      },
+      {
+        name: 'Below SMA',
+        current: `Price $${currentPrice.toFixed(2)} vs SMA $${bollinger.middle.toFixed(2)}`,
+        required: 'Price < SMA',
+        met: currentPrice < bollinger.middle,
+        importance: 'MEDIUM' as const,
+        description: 'Price below simple moving average'
+      },
+      {
+        name: 'Volume Confirmation',
+        current: `${marketData.volume.toFixed(0)} vs ${avgVolume.toFixed(0)} avg`,
+        required: '> 100% of average',
+        met: volumeConfirmation,
+        importance: 'MEDIUM' as const,
+        description: 'Sufficient volume to support the move'
+      },
+      {
+        name: 'Downward Momentum',
+        current: downwardMomentum ? 'Present' : 'Absent',
+        required: 'Recent downward price movement',
+        met: !!downwardMomentum,
+        importance: 'HIGH' as const,
+        description: 'Recent downward momentum for mean reversion'
+      },
+      {
+        name: 'Fear & Greed Confirmation',
+        current: marketData.fearGreedIndex ? `${marketData.fearGreedIndex.value} (${marketData.fearGreedIndex.valueClassification})` : 'N/A',
+        required: 'Supports bearish sentiment for mean reversion',
+        met: fearGreedBuyConfirmation,
+        importance: 'LOW' as const,
+        description: 'Market sentiment alignment for contrarian strategy'
+      }
+    ];
+
+    // SELL Analysis
+    const sellConditions = [
+      {
+        name: 'Above Upper Bollinger Band',
+        current: `Price $${currentPrice.toFixed(2)} vs Upper Band $${bollinger.upper.toFixed(2)}`,
+        required: 'Price >= Upper Band',
+        met: currentPrice >= bollinger.upper,
+        importance: 'CRITICAL' as const,
+        description: 'Price touching or above upper Bollinger Band indicates overbought'
+      },
+      {
+        name: 'RSI Overbought',
+        current: rsi.toFixed(1),
+        required: '>= 70 (overbought)',
+        met: rsi >= 70,
+        importance: 'HIGH' as const,
+        description: 'RSI indicates overbought condition'
+      },
+      {
+        name: 'Above SMA',
+        current: `Price $${currentPrice.toFixed(2)} vs SMA $${bollinger.middle.toFixed(2)}`,
+        required: 'Price > SMA',
+        met: currentPrice > bollinger.middle,
+        importance: 'MEDIUM' as const,
+        description: 'Price above simple moving average'
+      },
+      {
+        name: 'Volume Confirmation',
+        current: `${marketData.volume.toFixed(0)} vs ${avgVolume.toFixed(0)} avg`,
+        required: '> 100% of average',
+        met: volumeConfirmation,
+        importance: 'MEDIUM' as const,
+        description: 'Sufficient volume to support the move'
+      },
+      {
+        name: 'Upward Momentum',
+        current: upwardMomentum ? 'Present' : 'Absent',
+        required: 'Recent upward price movement',
+        met: !!upwardMomentum,
+        importance: 'HIGH' as const,
+        description: 'Recent upward momentum for mean reversion'
+      },
+      {
+        name: 'Fear & Greed Confirmation',
+        current: marketData.fearGreedIndex ? `${marketData.fearGreedIndex.value} (${marketData.fearGreedIndex.valueClassification})` : 'N/A',
+        required: 'Supports bullish sentiment for mean reversion',
+        met: fearGreedSellConfirmation,
+        importance: 'LOW' as const,
+        description: 'Market sentiment alignment for contrarian strategy'
+      }
+    ];
+
+    // Check BUY conditions
+    const criticalBuyMet = buyConditions.filter(c => c.importance === 'CRITICAL').every(c => c.met);
+    const buyScore = buyConditions.filter(c => c.met).length / buyConditions.length * 100;
     
-    // If Fear and Greed Index is available, use it to filter signals
-    if (marketData.fearGreedIndex) {
-      return technicalSignal && fearGreedConfirmation;
+    if (criticalBuyMet && buyScore >= 60) {
+      confidence = this.calculateConfidence(currentPrice, bollinger, rsi, 'BUY', marketData.fearGreedIndex);
+      
+      if (confidence >= 60) {
+        signal = {
+          action: 'BUY',
+          confidence,
+          price: currentPrice,
+          quantity: baseQuantity,
+          reason: this.generateReason(currentPrice, bollinger, rsi, 'BUY', marketData.fearGreedIndex),
+          timestamp: currentTime,
+          stopLoss: currentPrice * (1 - this.config.stopLossPercentage / 100),
+          takeProfit: currentPrice * (1 + this.config.takeProfitPercentage / 100)
+        };
+        finalDecision = 'BUY';
+      }
+    }
+    
+    // Check SELL conditions if no BUY signal
+    if (!signal) {
+      const criticalSellMet = sellConditions.filter(c => c.importance === 'CRITICAL').every(c => c.met);
+      const sellScore = sellConditions.filter(c => c.met).length / sellConditions.length * 100;
+      
+      if (criticalSellMet && sellScore >= 60) {
+        confidence = this.calculateConfidence(currentPrice, bollinger, rsi, 'SELL', marketData.fearGreedIndex);
+        
+        if (confidence >= 60) {
+          signal = {
+            action: 'SELL',
+            confidence,
+            price: currentPrice,
+            quantity: baseQuantity,
+            reason: this.generateReason(currentPrice, bollinger, rsi, 'SELL', marketData.fearGreedIndex),
+            timestamp: currentTime,
+            stopLoss: currentPrice * (1 + this.config.stopLossPercentage / 100),
+            takeProfit: currentPrice * (1 - this.config.takeProfitPercentage / 100)
+          };
+          finalDecision = 'SELL';
+        }
+      }
+      
+      // Log SELL analysis
+      AnalyticsLogger.logDecisionMatrix(
+        this.config.symbol,
+        'mean-reversion',
+        currentPrice,
+        sellConditions,
+        finalDecision,
+        confidence
+      );
+    } else {
+      // Log BUY analysis
+      AnalyticsLogger.logDecisionMatrix(
+        this.config.symbol,
+        'mean-reversion',
+        currentPrice,
+        buyConditions,
+        finalDecision,
+        confidence
+      );
     }
 
-    return technicalSignal;
+    // Log comprehensive indicator snapshot
+    AnalyticsLogger.logIndicatorSnapshot({
+      timestamp: currentTime,
+      price: currentPrice,
+      symbol: this.config.symbol,
+      strategy: 'mean-reversion',
+      indicators: {
+        sma: indicators.sma,
+        bollingerUpper: bollinger.upper,
+        bollingerMiddle: bollinger.middle,
+        bollingerLower: bollinger.lower,
+        rsi: indicators.rsi,
+        standardDeviation: indicators.standardDeviation,
+        volatility: volatility,
+        meanReversionPeriod: this.config.meanReversionPeriod,
+        deviationThreshold: this.config.deviationThreshold
+      },
+      marketData,
+      decisionPoints: {
+        belowLowerBand: currentPrice <= bollinger.lower,
+        aboveUpperBand: currentPrice >= bollinger.upper,
+        belowSMA: currentPrice < bollinger.middle,
+        aboveSMA: currentPrice > bollinger.middle,
+        rsiOversold: rsi <= 30,
+        rsiOverbought: rsi >= 70,
+        volumeConfirmation,
+        downwardMomentum: !!downwardMomentum,
+        upwardMomentum: !!upwardMomentum,
+        fearGreedBuyConfirmation,
+        fearGreedSellConfirmation,
+        priceDistanceFromSMA: Math.abs(currentPrice - bollinger.middle) / bollinger.middle * 100,
+        bandWidth: (bollinger.upper - bollinger.lower) / bollinger.middle * 100,
+        buyScore,
+        sellScore: sellConditions.filter(c => c.met).length / sellConditions.length * 100
+      },
+      signalGenerated: signal !== null,
+      signalReason: signal?.reason || '',
+      confidence: signal?.confidence || 0,
+      blockingFactors: signal ? [] : [
+        ...buyConditions.filter(c => !c.met && c.importance === 'CRITICAL').map(c => `BUY: ${c.name}`),
+        ...sellConditions.filter(c => !c.met && c.importance === 'CRITICAL').map(c => `SELL: ${c.name}`)
+      ]
+    });
+
+    if (signal) {
+      this.lastSignalTime = currentTime;
+      logger.info(`🎯 MEAN REVERSION SIGNAL GENERATED: ${signal.action} at $${currentPrice} (${confidence}% confidence)`);
+    }
+
+    return signal;
   }
 
   private getFearGreedConfirmation(fearGreedData: FearGreedData | undefined, action: 'BUY' | 'SELL'): boolean {

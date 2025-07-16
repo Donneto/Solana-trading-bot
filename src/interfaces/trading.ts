@@ -116,6 +116,12 @@ export interface RiskMetrics {
   currentExposure: number;
   positionsCount: number;
   riskScore: number;
+  // Enhanced P&L tracking
+  tradesExecuted?: number;
+  buyTrades?: number;
+  sellTrades?: number;
+  dailyTradeCount?: number;
+  pnlPercentage?: number;
 }
 
 export interface BinanceCredentials {

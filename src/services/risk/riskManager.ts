@@ -10,10 +10,19 @@ export class RiskManager extends EventEmitter {
   private dailyTradeCount: number = 0;
   private maxDailyTrades: number = 20;
   private lastResetDate: string = new Date().toDateString();
+  private tradeHistory: Array<{
+    side: 'BUY' | 'SELL';
+    quantity: number;
+    price: number;
+    timestamp: number;
+    value: number;
+  }> = [];
+  private initialBalance: number = 0;
 
   constructor(config: TradingConfig) {
     super();
     this.config = config;
+    this.initialBalance = config.initialCapital;
     this.resetDailyMetrics();
   }
 
@@ -22,8 +31,83 @@ export class RiskManager extends EventEmitter {
     if (this.lastResetDate !== today) {
       this.dailyPnL = 0;
       this.dailyTradeCount = 0;
+      this.tradeHistory = [];
       this.lastResetDate = today;
       logger.info('Daily metrics reset');
+    }
+  }
+
+  recordTrade(side: 'BUY' | 'SELL', quantity: number, price: number): void {
+    const value = quantity * price;
+    const trade = {
+      side,
+      quantity,
+      price,
+      timestamp: Date.now(),
+      value
+    };
+    
+    this.tradeHistory.push(trade);
+    this.dailyTradeCount++;
+    
+    // Calculate P&L for matched BUY/SELL pairs
+    this.calculateRealizedPnL();
+    
+    TradingLogger.logTrade('TRADE_RECORDED', {
+      side,
+      quantity,
+      price,
+      value,
+      tradeNumber: this.tradeHistory.length,
+      dailyPnL: this.dailyPnL
+    });
+  }
+
+  private calculateRealizedPnL(): void {
+    const buyTrades = this.tradeHistory.filter(t => t.side === 'BUY');
+    const sellTrades = this.tradeHistory.filter(t => t.side === 'SELL');
+    
+    let totalBuyValue = 0;
+    let totalBuyQuantity = 0;
+    let totalSellValue = 0;
+    let totalSellQuantity = 0;
+    
+    buyTrades.forEach(trade => {
+      totalBuyValue += trade.value;
+      totalBuyQuantity += trade.quantity;
+    });
+    
+    sellTrades.forEach(trade => {
+      totalSellValue += trade.value;
+      totalSellQuantity += trade.quantity;
+    });
+    
+    // Calculate P&L for matched quantities
+    const matchedQuantity = Math.min(totalBuyQuantity, totalSellQuantity);
+    
+    if (matchedQuantity > 0) {
+      const avgBuyPrice = totalBuyValue / totalBuyQuantity;
+      const avgSellPrice = totalSellValue / totalSellQuantity;
+      
+      const realizedPnL = matchedQuantity * (avgSellPrice - avgBuyPrice);
+      
+      // Update daily P&L (only count the new realized P&L)
+      const previousPnL = this.dailyPnL;
+      this.dailyPnL = realizedPnL;
+      this.totalPnL += (realizedPnL - previousPnL);
+      
+      if (Math.abs(realizedPnL - previousPnL) > 0.01) { // Only log if significant change
+        TradingLogger.logTrade('PNL_UPDATED', {
+          matchedQuantity,
+          avgBuyPrice,
+          avgSellPrice,
+          realizedPnL,
+          dailyPnL: this.dailyPnL,
+          totalPnL: this.totalPnL,
+          buyTrades: buyTrades.length,
+          sellTrades: sellTrades.length
+        });
+      }
     }
   }
 
@@ -60,6 +144,18 @@ export class RiskManager extends EventEmitter {
       });
       return { isValid: false, reason: 'Maximum open positions reached' };
     }
+
+    // DEBUG: Always log position size calculation for troubleshooting
+    TradingLogger.logRisk('Position size validation', {
+      requestedSize: positionSize.toFixed(2),
+      maxSize: this.config.positionSizePercentage,
+      quantity: quantity,
+      price: price,
+      currentBalance: currentBalance,
+      tradeValue: tradeValue.toFixed(2),
+      calculation: `(${quantity} × ${price} / ${currentBalance}) × 100 = ${positionSize.toFixed(2)}%`,
+      isValid: positionSize <= this.config.positionSizePercentage
+    });
 
     if (positionSize > this.config.positionSizePercentage) {
       TradingLogger.logRisk('Position size too large', {
@@ -254,9 +350,10 @@ export class RiskManager extends EventEmitter {
     const totalExposure = openPositions.reduce((sum, pos) => 
       sum + (pos.quantity * pos.currentPrice), 0);
 
-    const closedTrades = this.dailyTradeCount - this.positions.size;
-    const winningTrades = closedTrades > 0 ? Math.floor(closedTrades * 0.6) : 0; // Estimate
-    const winRate = closedTrades > 0 ? (winningTrades / closedTrades) * 100 : 0;
+    const buyTrades = this.tradeHistory.filter(t => t.side === 'BUY').length;
+    const sellTrades = this.tradeHistory.filter(t => t.side === 'SELL').length;
+    const totalTrades = this.tradeHistory.length;
+    const winRate = totalTrades > 1 && this.dailyPnL > 0 ? 60 : 40; // Estimate based on P&L
 
     return {
       dailyPnL: this.dailyPnL,
@@ -266,7 +363,13 @@ export class RiskManager extends EventEmitter {
       maxDrawdown: this.calculateMaxDrawdown(),
       currentExposure: totalExposure,
       positionsCount: this.positions.size,
-      riskScore: this.calculateRiskScore()
+      riskScore: this.calculateRiskScore(),
+      // Additional P&L tracking info
+      tradesExecuted: totalTrades,
+      buyTrades,
+      sellTrades,
+      dailyTradeCount: this.dailyTradeCount,
+      pnlPercentage: this.initialBalance > 0 ? (this.dailyPnL / this.initialBalance) * 100 : 0
     };
   }
 

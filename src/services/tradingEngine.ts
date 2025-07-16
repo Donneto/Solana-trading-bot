@@ -153,13 +153,29 @@ export class TradingEngine extends EventEmitter {
 
     // Balance updates
     this.binanceService.on('balanceUpdate', (data: any) => {
-      logger.info(`💰 Balance Update: ${data.asset} ${data.balanceDelta > 0 ? '+' : ''}${data.balanceDelta}`, {
-        newBalance: data.newBalance
+      const balanceChange = data.balanceDelta;
+      logger.info(`💰 Balance Update: ${data.asset} ${balanceChange > 0 ? '+' : ''}${balanceChange}`, {
+        newBalance: data.newBalance,
+        change: balanceChange,
+        source: 'User Data Stream'
       });
       
       // Update current balance if it's USDT
       if (data.asset === 'USDT') {
+        const previousBalance = this.currentBalance;
         this.currentBalance = data.newBalance;
+        
+        // Log significant balance changes that could indicate realized P&L
+        if (Math.abs(balanceChange) > 1) { // Changes > $1
+          const pnlMetrics = this.riskManager.getRiskMetrics();
+          logger.info(`📊 Significant balance change detected:`, {
+            previousBalance: previousBalance.toFixed(2),
+            newBalance: data.newBalance.toFixed(2),
+            change: balanceChange.toFixed(2),
+            dailyPnL: pnlMetrics.dailyPnL?.toFixed(2) || '0.00',
+            totalTrades: pnlMetrics.tradesExecuted || 0
+          });
+        }
       }
     });
 
@@ -173,7 +189,10 @@ export class TradingEngine extends EventEmitter {
 
   private handleOrderFilled(orderData: any): void {
     try {
-      const { orderId, symbol, side, executedQty, avgPrice, totalValue } = orderData;
+      const { orderId, symbol, side, executedQty, avgPrice } = orderData;
+      
+      // Record the actual trade in risk manager for P&L tracking
+      this.riskManager.recordTrade(side as 'BUY' | 'SELL', executedQty, avgPrice);
       
       // Find if this relates to an existing position in our risk manager
       const existingPositions = this.riskManager.getOpenPositions();
@@ -206,6 +225,7 @@ export class TradingEngine extends EventEmitter {
       this.riskManager.addPosition(position);
       
       logger.info(`📊 Position created from order fill: ${side} ${executedQty} ${symbol} @ $${avgPrice}`);
+      logger.info(`💰 Current Daily P&L: $${this.riskManager.getDailyPnL().toFixed(2)}`);
       
       // Emit event for other components
       this.emit('positionCreated', position);
@@ -285,10 +305,29 @@ export class TradingEngine extends EventEmitter {
       // Execute the trade
       await this.executeTrade(signal);
 
+      // Log P&L status after execution
+      this.logPnLStatus();
+
     } catch (error) {
       TradingLogger.logError(error as Error, { 
         context: 'TradingEngine.handleTradingSignal',
         signal: signal
+      });
+    }
+  }
+
+  private logPnLStatus(): void {
+    const metrics = this.riskManager.getRiskMetrics();
+    
+    if (metrics.tradesExecuted && metrics.tradesExecuted > 0) {
+      logger.info(`💰 P&L Status Update:`, {
+        dailyPnL: `$${metrics.dailyPnL.toFixed(2)}`,
+        pnlPercentage: `${(metrics.pnlPercentage || 0).toFixed(3)}%`,
+        tradesExecuted: metrics.tradesExecuted,
+        buyTrades: metrics.buyTrades,
+        sellTrades: metrics.sellTrades,
+        currentBalance: `$${this.currentBalance.toFixed(2)}`,
+        openPositions: metrics.positionsCount
       });
     }
   }

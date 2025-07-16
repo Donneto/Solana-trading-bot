@@ -20,7 +20,7 @@ export const testnetCoinProfiles: Record<string, CoinProfile> = {
   'BTCUSDT': {
     symbol: 'BTCUSDT',
     volatility: 'low',
-    strategy: 'momentum',
+    strategy: 'gridTrading',
     meanReversionPeriod: 12,
     deviationThreshold: 1.5,
     stopLossPercentage: 3.0,
@@ -29,13 +29,13 @@ export const testnetCoinProfiles: Record<string, CoinProfile> = {
     positionSizePercentage: 15,
     maxOpenPositions: 4,
     gridLevels: 8,
-    gridSpacingPercentage: 1.2,
-    description: 'Testnet Bitcoin - momentum strategy for trend following'
+    gridSpacingPercentage: 0.5,
+    description: 'Testnet Bitcoin - grid trading strategy for low volatility institutional trading'
   },
   'SOLUSDT': {
     symbol: 'SOLUSDT',
     volatility: 'medium',
-    strategy: 'momentum',
+    strategy: 'meanReversion',
     meanReversionPeriod: 18,
     deviationThreshold: 2.0,
     stopLossPercentage: 3.5,
@@ -44,8 +44,8 @@ export const testnetCoinProfiles: Record<string, CoinProfile> = {
     positionSizePercentage: 12,
     maxOpenPositions: 5,
     gridLevels: 10,
-    gridSpacingPercentage: 1.5,
-    description: 'Testnet Solana - momentum strategy for trend following ($10K scale)'
+    gridSpacingPercentage: 0.5,
+    description: 'Testnet Solana - mean reversion strategy for balanced volatility patterns'
   },
   'ADAUSDT': {
     symbol: 'ADAUSDT',
@@ -56,16 +56,16 @@ export const testnetCoinProfiles: Record<string, CoinProfile> = {
     stopLossPercentage: 4.0,
     takeProfitPercentage: 6.0,
     trailingStopPercentage: 3.0,
-    positionSizePercentage: 5,
+    positionSizePercentage: 2,
     maxOpenPositions: 3,
     gridLevels: 8,
-    gridSpacingPercentage: 2.0,
-    description: 'Testnet Cardano - momentum strategy for trend following ($10K scale)'
+    gridSpacingPercentage: 0.5,
+    description: 'Testnet Cardano - momentum strategy for high volatility trend movements'
   },
   'XRPUSDT': {
     symbol: 'XRPUSDT',
     volatility: 'high',
-    strategy: 'meanReversion',
+    strategy: 'momentum',
     meanReversionPeriod: 20,
     deviationThreshold: 2.3,
     stopLossPercentage: 4.5,
@@ -74,8 +74,8 @@ export const testnetCoinProfiles: Record<string, CoinProfile> = {
     positionSizePercentage: 13,
     maxOpenPositions: 5,
     gridLevels: 9,
-    gridSpacingPercentage: 1.8,
-    description: 'Testnet XRP - moderate volatility settings for $10K testing'
+    gridSpacingPercentage: 0.5,
+    description: 'Testnet XRP - momentum strategy for news-driven volatility and quick trends'
   }
 };
 

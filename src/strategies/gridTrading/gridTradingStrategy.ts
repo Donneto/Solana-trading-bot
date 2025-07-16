@@ -1,6 +1,7 @@
 import { EventEmitter } from 'events';
 import { TradingSignal, MarketData, TradingConfig } from '../../interfaces/trading';
 import { logger, TradingLogger } from '../../utils/logger';
+import { AnalyticsLogger } from '../../utils/analyticsLogger';
 
 interface GridLevel {
   price: number;
@@ -23,7 +24,7 @@ export class GridTradingStrategy extends EventEmitter {
   private gridState: GridState;
   private priceHistory: number[] = [];
   private lastSignalTime: number = 0;
-  private signalCooldown: number = 30000; // 30 second cooldown for grid
+  private signalCooldown: number = 5000; // 5 second cooldown for scalping
   private gridInitialized: boolean = false;
 
   constructor(config: TradingConfig) {
@@ -43,7 +44,8 @@ export class GridTradingStrategy extends EventEmitter {
 
     if (!this.gridInitialized) {
       this.initializeGrid(marketData.price);
-      return null;
+      // Generate initial signal to place first grid order
+      return this.generateInitialGridSignal(marketData);
     }
 
     const signal = this.checkGridTriggers(marketData);
@@ -106,10 +108,131 @@ export class GridTradingStrategy extends EventEmitter {
     });
   }
 
+  private generateInitialGridSignal(marketData: MarketData): TradingSignal | null {
+    const currentPrice = marketData.price;
+    const currentTime = Date.now();
+    
+    // Find the closest buy level below current price for initial order
+    const buyLevels = this.gridState.gridLevels.filter(l => l.type === 'BUY' && l.isActive);
+    if (buyLevels.length === 0) return null;
+    
+    // Get the highest buy level (closest to current price)
+    const initialBuyLevel = buyLevels.reduce((highest, level) => 
+      level.price > highest.price ? level : highest
+    );
+    
+    const stopLossDistance = this.config.stopLossPercentage / 100;
+    const takeProfitDistance = this.config.takeProfitPercentage / 100;
+    
+    // Log decision analysis for initial grid signal
+    AnalyticsLogger.logDecisionMatrix(
+      this.config.symbol,
+      'grid-trading',
+      currentPrice,
+      [
+        {
+          name: 'Grid Initialization',
+          current: 'First order placement',
+          required: 'Grid levels configured',
+          met: true,
+          importance: 'CRITICAL',
+          description: 'Initialize grid trading with first order'
+        },
+        {
+          name: 'Target Level Available',
+          current: `${buyLevels.length} buy levels available`,
+          required: 'At least 1 buy level',
+          met: buyLevels.length > 0,
+          importance: 'CRITICAL',
+          description: 'Must have available grid levels to trigger'
+        },
+        {
+          name: 'Price Position',
+          current: `Price $${currentPrice.toFixed(2)} vs target $${initialBuyLevel.price.toFixed(2)}`,
+          required: 'Current price appropriate for grid entry',
+          met: true,
+          importance: 'MEDIUM',
+          description: 'Price positioning for grid strategy entry'
+        }
+      ],
+      'BUY',
+      85
+    );
+    
+    const signal: TradingSignal = {
+      action: 'BUY',
+      confidence: 85, // High confidence for grid strategy
+      price: currentPrice, // Execute at market price
+      quantity: initialBuyLevel.quantity,
+      reason: `Grid initialization: Placing initial BUY order (${this.config.gridSpacingPercentage}% spacing)`,
+      timestamp: currentTime,
+      stopLoss: currentPrice * (1 - stopLossDistance),
+      takeProfit: currentPrice * (1 + takeProfitDistance)
+    };
+    
+    // Log indicator snapshot for grid initialization
+    AnalyticsLogger.logIndicatorSnapshot({
+      timestamp: currentTime,
+      price: currentPrice,
+      symbol: this.config.symbol,
+      strategy: 'grid-trading',
+      indicators: {
+        gridSpacing: this.config.gridSpacingPercentage,
+        gridLevels: this.config.gridLevels,
+        activeGridLevels: this.gridState.gridLevels.filter(l => l.isActive).length,
+        totalGridLevels: this.gridState.gridLevels.length,
+        basePrice: this.gridState.basePrice,
+        quantityPerLevel: initialBuyLevel.quantity
+      },
+      marketData,
+      decisionPoints: {
+        gridInitialized: this.gridInitialized,
+        availableBuyLevels: buyLevels.length,
+        targetLevelPrice: initialBuyLevel.price,
+        gridSpacing: this.config.gridSpacingPercentage,
+        totalInvested: this.gridState.totalInvested,
+        totalProfit: this.gridState.totalProfit
+      },
+      signalGenerated: true,
+      signalReason: signal.reason,
+      confidence: signal.confidence
+    });
+    
+    // Mark this level as used and create sell level above
+    initialBuyLevel.isActive = false;
+    this.createOppositeGridLevel(initialBuyLevel, currentPrice);
+    this.lastSignalTime = currentTime;
+    
+    logger.info('Generated initial grid signal', {
+      action: signal.action,
+      price: signal.price,
+      quantity: signal.quantity,
+      targetLevel: initialBuyLevel.price
+    });
+    
+    return signal;
+  }
+
   private checkGridTriggers(marketData: MarketData): TradingSignal | null {
     const currentTime = Date.now();
     
     if (currentTime - this.lastSignalTime < this.signalCooldown) {
+      // Log cooldown blocking
+      AnalyticsLogger.logDecisionMatrix(
+        this.config.symbol,
+        'grid-trading',
+        marketData.price,
+        [{
+          name: 'Signal Cooldown',
+          current: `${Math.round((currentTime - this.lastSignalTime) / 1000)}s ago`,
+          required: `${this.signalCooldown / 1000}s`,
+          met: false,
+          importance: 'CRITICAL',
+          description: 'Must wait between signals to avoid overtrading'
+        }],
+        'HOLD',
+        0
+      );
       return null;
     }
 
@@ -129,15 +252,91 @@ export class GridTradingStrategy extends EventEmitter {
       }
     }
 
-    if (!triggeredLevel) return null;
+    if (!triggeredLevel) {
+      // Log no triggers
+      const activeLevels = this.gridState.gridLevels.filter(l => l.isActive);
+      const buyLevels = activeLevels.filter(l => l.type === 'BUY');
+      const sellLevels = activeLevels.filter(l => l.type === 'SELL');
+      
+      AnalyticsLogger.logDecisionMatrix(
+        this.config.symbol,
+        'grid-trading',
+        currentPrice,
+        [
+          {
+            name: 'Grid Level Triggered',
+            current: `No levels triggered at $${currentPrice.toFixed(2)}`,
+            required: `Price hits buy level (<= ${buyLevels.length > 0 ? Math.max(...buyLevels.map(l => l.price)).toFixed(2) : 'N/A'}) or sell level (>= ${sellLevels.length > 0 ? Math.min(...sellLevels.map(l => l.price)).toFixed(2) : 'N/A'})`,
+            met: false,
+            importance: 'CRITICAL',
+            description: 'Grid level must be triggered to generate signal'
+          },
+          {
+            name: 'Active Grid Levels',
+            current: `${activeLevels.length} active (${buyLevels.length} buy, ${sellLevels.length} sell)`,
+            required: 'At least 1 active level',
+            met: activeLevels.length > 0,
+            importance: 'CRITICAL',
+            description: 'Must have active grid levels'
+          }
+        ],
+        'HOLD',
+        0
+      );
+      return null;
+    }
 
     // Calculate stop loss and take profit for grid trade
     const stopLossDistance = this.config.stopLossPercentage / 100;
     const takeProfitDistance = this.config.takeProfitPercentage / 100;
+    const confidence = this.calculateGridConfidence(triggeredLevel, currentPrice);
+
+    // Log grid trigger analysis
+    AnalyticsLogger.logDecisionMatrix(
+      this.config.symbol,
+      'grid-trading',
+      currentPrice,
+      [
+        {
+          name: 'Grid Level Triggered',
+          current: `${triggeredLevel.type} level at $${triggeredLevel.price.toFixed(2)}`,
+          required: `Price ${triggeredLevel.type === 'BUY' ? '<=' : '>='} target level`,
+          met: true,
+          importance: 'CRITICAL',
+          description: 'Grid level successfully triggered'
+        },
+        {
+          name: 'Price Distance',
+          current: `${Math.abs((currentPrice - triggeredLevel.price) / triggeredLevel.price * 100).toFixed(2)}%`,
+          required: 'Price close to target level',
+          met: Math.abs(currentPrice - triggeredLevel.price) / triggeredLevel.price <= 0.002, // Within 0.2%
+          importance: 'HIGH',
+          description: 'Price should be close to target for optimal execution'
+        },
+        {
+          name: 'Grid Confidence',
+          current: `${confidence.toFixed(1)}%`,
+          required: '>= 60%',
+          met: confidence >= 60,
+          importance: 'MEDIUM',
+          description: 'Grid strategy confidence level'
+        },
+        {
+          name: 'Active Orders Limit',
+          current: `${this.gridState.activeOrders} active`,
+          required: `<= ${this.config.maxOpenPositions}`,
+          met: this.gridState.activeOrders <= this.config.maxOpenPositions,
+          importance: 'HIGH',
+          description: 'Must not exceed maximum active orders'
+        }
+      ],
+      triggeredLevel.type,
+      confidence
+    );
 
     const signal: TradingSignal = {
       action: triggeredLevel.type,
-      confidence: this.calculateGridConfidence(triggeredLevel, currentPrice),
+      confidence,
       price: currentPrice,
       quantity: triggeredLevel.quantity,
       reason: this.generateGridReason(triggeredLevel, currentPrice),
@@ -149,6 +348,40 @@ export class GridTradingStrategy extends EventEmitter {
         ? currentPrice * (1 + takeProfitDistance)
         : currentPrice * (1 - takeProfitDistance)
     };
+
+    // Log detailed grid state snapshot
+    AnalyticsLogger.logIndicatorSnapshot({
+      timestamp: currentTime,
+      price: currentPrice,
+      symbol: this.config.symbol,
+      strategy: 'grid-trading',
+      indicators: {
+        gridSpacing: this.config.gridSpacingPercentage,
+        gridLevels: this.config.gridLevels,
+        activeGridLevels: this.gridState.gridLevels.filter(l => l.isActive).length,
+        totalGridLevels: this.gridState.gridLevels.length,
+        basePrice: this.gridState.basePrice,
+        triggeredLevelPrice: triggeredLevel.price,
+        triggeredLevelType: triggeredLevel.type,
+        priceDistanceFromBase: Math.abs(currentPrice - this.gridState.basePrice) / this.gridState.basePrice * 100,
+        quantityPerLevel: triggeredLevel.quantity
+      },
+      marketData,
+      decisionPoints: {
+        gridInitialized: this.gridInitialized,
+        triggeredLevelPrice: triggeredLevel.price,
+        triggeredLevelType: triggeredLevel.type,
+        priceDistance: Math.abs(currentPrice - triggeredLevel.price) / triggeredLevel.price * 100,
+        gridSpacing: this.config.gridSpacingPercentage,
+        totalInvested: this.gridState.totalInvested,
+        totalProfit: this.gridState.totalProfit,
+        activeOrders: this.gridState.activeOrders,
+        maxOpenPositions: this.config.maxOpenPositions
+      },
+      signalGenerated: true,
+      signalReason: signal.reason,
+      confidence: signal.confidence
+    });
 
     // Mark level as inactive and create opposite level
     triggeredLevel.isActive = false;

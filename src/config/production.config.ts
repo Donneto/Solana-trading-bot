@@ -56,7 +56,7 @@ export const productionCoinProfiles: Record<string, CoinProfile> = {
     stopLossPercentage: 2.0,
     takeProfitPercentage: 3.5,
     trailingStopPercentage: 1.8,
-    positionSizePercentage: 2.5,
+    positionSizePercentage: 2.0,
     maxOpenPositions: 5,
     gridLevels: 6,
     gridSpacingPercentage: 1.5,
