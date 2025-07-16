@@ -120,7 +120,7 @@ export class RiskManager extends EventEmitter {
   }
 
   validateTrade(
-    side: 'BUY' | 'SELL',
+    _side: 'BUY' | 'SELL',
     quantity: number,
     price: number,
     currentBalance: number
@@ -231,7 +231,7 @@ export class RiskManager extends EventEmitter {
     }
   }
 
-  calculateTrailingStop(currentPrice: number, entryPrice: number, side: 'BUY' | 'SELL'): number {
+  calculateTrailingStop(currentPrice: number, _entryPrice: number, side: 'BUY' | 'SELL'): number {
     const trailingStopMultiplier = this.config.trailingStopPercentage / 100;
     
     if (side === 'BUY') {
@@ -271,6 +271,11 @@ export class RiskManager extends EventEmitter {
     }
 
     position.currentPrice = currentPrice;
+
+    // Enhanced P&L tracking log every few updates to avoid spam
+    if (Math.abs(position.unrealizedPnL - previousPnL) > 0.01) {
+      console.log(`[P&L Update] ${position.id.substring(0,6)}: $${position.unrealizedPnL.toFixed(2)} (${position.unrealizedPnL > previousPnL ? '+' : ''}${(position.unrealizedPnL - previousPnL).toFixed(2)})`);
+    }
 
     const newTrailingStop = this.calculateTrailingStop(currentPrice, position.entryPrice, position.side);
     if (position.side === 'BUY' && newTrailingStop > position.trailingStopPrice) {
@@ -371,14 +376,21 @@ export class RiskManager extends EventEmitter {
     const totalExposure = openPositions.reduce((sum, pos) => 
       sum + (pos.quantity * pos.currentPrice), 0);
 
+    // Calculate total unrealized P&L for current open positions
+    const totalUnrealizedPnL = openPositions.reduce((sum, pos) => sum + pos.unrealizedPnL, 0);
+
     const buyTrades = this.tradeHistory.filter(t => t.side === 'BUY').length;
     const sellTrades = this.tradeHistory.filter(t => t.side === 'SELL').length;
     const totalTrades = this.tradeHistory.length;
     const winRate = totalTrades > 1 && this.dailyPnL > 0 ? 60 : 40; // Estimate based on P&L
 
+    // Include unrealized P&L in the daily and total P&L display
+    const displayDailyPnL = this.dailyPnL + totalUnrealizedPnL;
+    const displayTotalPnL = this.totalPnL + totalUnrealizedPnL;
+
     return {
-      dailyPnL: this.dailyPnL,
-      totalPnL: this.totalPnL,
+      dailyPnL: displayDailyPnL,
+      totalPnL: displayTotalPnL,
       winRate,
       sharpeRatio: this.calculateSharpeRatio(),
       maxDrawdown: this.calculateMaxDrawdown(),
@@ -390,8 +402,15 @@ export class RiskManager extends EventEmitter {
       buyTrades,
       sellTrades,
       dailyTradeCount: this.dailyTradeCount,
-      pnlPercentage: this.initialBalance > 0 ? (this.dailyPnL / this.initialBalance) * 100 : 0
+      pnlPercentage: this.initialBalance > 0 ? (displayDailyPnL / this.initialBalance) * 100 : 0,
+      unrealizedPnL: totalUnrealizedPnL
     };
+  }
+
+  getDailyPnL(): number {
+    const openPositions = Array.from(this.positions.values());
+    const totalUnrealizedPnL = openPositions.reduce((sum, pos) => sum + pos.unrealizedPnL, 0);
+    return this.dailyPnL + totalUnrealizedPnL;
   }
 
   private calculateSharpeRatio(): number {
@@ -428,10 +447,6 @@ export class RiskManager extends EventEmitter {
 
   getOpenPositions(): Position[] {
     return Array.from(this.positions.values());
-  }
-
-  getDailyPnL(): number {
-    return this.dailyPnL;
   }
 
   getTotalPnL(): number {

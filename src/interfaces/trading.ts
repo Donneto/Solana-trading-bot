@@ -122,6 +122,7 @@ export interface RiskMetrics {
   sellTrades?: number;
   dailyTradeCount?: number;
   pnlPercentage?: number;
+  unrealizedPnL?: number;
 }
 
 export interface BinanceCredentials {

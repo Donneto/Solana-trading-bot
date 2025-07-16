@@ -250,9 +250,15 @@ export class TradingEngine extends EventEmitter {
       }
     }
 
-    // Generate trading signal from strategy (removed duplicate event-based handling)
-    // NOTE: Strategy already emits signals via event listener on line 96
-    // No need to call analyzeMarketAsync here as it would duplicate signals
+    // Feed market data to strategy for analysis
+    // Strategy will emit signals via event listener (line 95) - no duplicate handling
+    if (this.strategy && 'analyzeMarketAsync' in this.strategy) {
+      try {
+        await (this.strategy as any).analyzeMarketAsync(marketData);
+      } catch (error) {
+        logger.error('Strategy analysis failed:', error);
+      }
+    }
   }
 
   private async handleTradingSignal(signal: TradingSignal): Promise<void> {
