@@ -419,10 +419,28 @@ export class TradingEngine extends EventEmitter {
           });
         }
 
-        // Position creation will be handled by User Data Stream
-        // via handleOrderFilled when the executionReport arrives
+        // Create position immediately after successful execution
+        // Don't rely on User Data Stream as it may not fire for testnet market orders
+        const position: Position = {
+          id: `order-${marketOrder.orderId}`,
+          symbol: this.config.symbol,
+          side: signal.action as 'BUY' | 'SELL',
+          quantity: fillQuantity,
+          entryPrice: fillPrice,
+          currentPrice: fillPrice,
+          unrealizedPnL: 0,
+          stopLossPrice: this.riskManager.calculateStopLoss(fillPrice, signal.action as 'BUY' | 'SELL'),
+          takeProfitPrice: this.riskManager.calculateTakeProfit(fillPrice, signal.action as 'BUY' | 'SELL'),
+          trailingStopPrice: 0,
+          timestamp: Date.now(),
+          status: 'OPEN'
+        };
+        
+        // Add position to risk manager for tracking
+        this.riskManager.addPosition(position);
         
         logger.info(`✅ Order executed: ${signal.action} ${fillQuantity} ${this.config.symbol} @ $${fillPrice}`);
+        logger.info(`📊 Position created: ${position.id} | Daily P&L: $${this.riskManager.getDailyPnL().toFixed(2)}`);
 
       } else {
         logger.warn('Market order not filled', { orderId: marketOrder.orderId, status: marketOrder.status });

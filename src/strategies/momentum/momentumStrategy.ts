@@ -648,15 +648,20 @@ export class MomentumStrategy extends EventEmitter {
       currentExposure = symbolPositions.reduce((total: number, pos: any) => {
         return total + (pos.quantity * pos.currentPrice);
       }, 0);
+      
+      logger.debug(`Current exposure calculation: ${symbolPositions.length} positions found for ${this.config.symbol}, total value: $${currentExposure.toFixed(2)}`);
     }
     
     // Dynamic sizing based on account equity and exposure
     const totalExposure = currentExposure;
     const exposureRatio = totalExposure / capital;
     
+    logger.debug(`Exposure analysis: Current=$${currentExposure.toFixed(2)}, Capital=$${capital.toFixed(2)}, Ratio=${(exposureRatio * 100).toFixed(2)}%`);
+    
     // Reduce position size if we already have significant exposure
     if (exposureRatio > 0.1) { // More than 10% exposure
       baseSize = baseSize * 0.5; // Cut position size in half
+      logger.debug(`High exposure detected (${(exposureRatio * 100).toFixed(2)}%), reducing position size by 50%`);
     }
     
     // Further reduce if market volatility is high (based on price movement)
@@ -665,6 +670,7 @@ export class MomentumStrategy extends EventEmitter {
       const volatility = this.calculateVolatility(recentPrices);
       if (volatility > 0.02) { // High volatility (>2%)
         baseSize = baseSize * 0.7;
+        logger.debug(`High volatility detected (${(volatility * 100).toFixed(2)}%), reducing position size by 30%`);
       }
     }
     
@@ -685,13 +691,13 @@ export class MomentumStrategy extends EventEmitter {
     
     // If we can't even place minimum order, return 0
     if (finalPositionValue < minOrderValue || remainingCapacity <= 0) {
-      logger.info(`Position sizing blocked: Current exposure $${currentExposure.toFixed(2)}, Max allowed $${maxSymbolExposure.toFixed(2)}`);
+      logger.info(`❌ Position sizing blocked: Current exposure $${currentExposure.toFixed(2)}, Max allowed $${maxSymbolExposure.toFixed(2)}, Remaining capacity $${remainingCapacity.toFixed(2)}`);
       return 0;
     }
     
     const quantity = parseFloat((finalPositionValue / price).toFixed(6));
     
-    logger.debug(`Position sizing: Base=$${basePositionValue.toFixed(2)}, Current exposure=$${currentExposure.toFixed(2)}, Adjusted=$${adjustedPositionValue.toFixed(2)}, MinOrder=$${minOrderValue.toFixed(2)}, Final=$${finalPositionValue.toFixed(2)}, Qty=${quantity}`);
+    logger.info(`📏 Position sizing: Base=$${basePositionValue.toFixed(2)}, Current exposure=$${currentExposure.toFixed(2)}, Adjusted=$${adjustedPositionValue.toFixed(2)}, MinOrder=$${minOrderValue.toFixed(2)}, Final=$${finalPositionValue.toFixed(2)}, Qty=${quantity}`);
     
     return quantity;
   }

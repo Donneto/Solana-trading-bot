@@ -130,6 +130,10 @@ export class RiskManager extends EventEmitter {
     const tradeValue = quantity * price;
     const positionSize = (tradeValue / currentBalance) * 100;
 
+    // Calculate current exposure for this symbol
+    const symbolPositions = Array.from(this.positions.values()).filter(p => p.symbol === this.config.symbol);
+    const currentExposure = symbolPositions.reduce((total, pos) => total + (pos.quantity * pos.currentPrice), 0);
+
     if (this.dailyPnL <= -this.config.maxDailyLoss) {
       TradingLogger.logRisk('Daily loss limit reached', {
         dailyPnL: this.dailyPnL,
@@ -153,7 +157,7 @@ export class RiskManager extends EventEmitter {
       return { isValid: false, reason: 'Maximum open positions reached' };
     }
 
-    // Enhanced logging for all validation checks
+    // Enhanced logging for all validation checks including exposure
     TradingLogger.logRisk('Comprehensive risk validation', {
       requestedSize: positionSize.toFixed(2),
       maxSize: this.config.positionSizePercentage,
@@ -161,12 +165,14 @@ export class RiskManager extends EventEmitter {
       price: price,
       currentBalance: currentBalance,
       tradeValue: tradeValue.toFixed(2),
+      currentExposure: currentExposure.toFixed(2),
+      openPositions: symbolPositions.length,
       calculation: `(${quantity} × ${price} / ${currentBalance}) × 100 = ${positionSize.toFixed(2)}%`,
       dailyPnL: this.dailyPnL,
       maxDailyLoss: this.config.maxDailyLoss,
       dailyTradeCount: this.dailyTradeCount,
       maxDailyTrades: this.maxDailyTrades,
-      openPositions: this.positions.size,
+      totalPositions: this.positions.size,
       maxOpenPositions: this.config.maxOpenPositions,
       balanceThreshold: (currentBalance * 0.90).toFixed(2),
       checksStatus: {
@@ -186,6 +192,7 @@ export class RiskManager extends EventEmitter {
         price: price,
         currentBalance: currentBalance,
         tradeValue: tradeValue.toFixed(2),
+        currentExposure: currentExposure.toFixed(2),
         calculation: `(${quantity} × ${price} / ${currentBalance}) × 100 = ${positionSize.toFixed(2)}%`
       });
       return { isValid: false, reason: 'Position size exceeds maximum allowed' };
