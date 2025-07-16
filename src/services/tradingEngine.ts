@@ -1,5 +1,4 @@
 import { EventEmitter } from 'events';
-import { v4 as uuidv4 } from 'uuid';
 import { BinanceService } from '../services/binance/binanceService';
 import { RiskManager } from '../services/risk/riskManager';
 import { MeanReversionStrategy } from '../strategies/meanReversion/meanReversionStrategy';
@@ -251,13 +250,9 @@ export class TradingEngine extends EventEmitter {
       }
     }
 
-    // Generate trading signal from strategy
-    if (this.strategy) {
-      const signal = await this.strategy.analyzeMarketAsync(marketData);
-      if (signal) {
-        await this.handleTradingSignal(signal);
-      }
-    }
+    // Generate trading signal from strategy (removed duplicate event-based handling)
+    // NOTE: Strategy already emits signals via event listener on line 96
+    // No need to call analyzeMarketAsync here as it would duplicate signals
   }
 
   private async handleTradingSignal(signal: TradingSignal): Promise<void> {
@@ -318,6 +313,17 @@ export class TradingEngine extends EventEmitter {
 
   private logPnLStatus(): void {
     const metrics = this.riskManager.getRiskMetrics();
+    
+    logger.info(`📊 Trading Session Status:`, {
+      tradesExecuted: metrics.tradesExecuted || 0,
+      dailyPnL: `$${(metrics.dailyPnL || 0).toFixed(2)}`,
+      pnlPercentage: `${((metrics.pnlPercentage || 0) * 100).toFixed(3)}%`,
+      buyTrades: metrics.buyTrades || 0,
+      sellTrades: metrics.sellTrades || 0,
+      openPositions: metrics.positionsCount || 0,
+      currentBalance: `$${this.currentBalance.toFixed(2)}`,
+      executionRate: `${this.signalStats.executed}/${this.signalStats.total} (${this.signalStats.total > 0 ? ((this.signalStats.executed / this.signalStats.total) * 100).toFixed(1) : 0}%)`
+    });
     
     if (metrics.tradesExecuted && metrics.tradesExecuted > 0) {
       logger.info(`💰 P&L Status Update:`, {

@@ -99,13 +99,21 @@ export class RiskManager extends EventEmitter {
       if (Math.abs(realizedPnL - previousPnL) > 0.01) { // Only log if significant change
         TradingLogger.logTrade('PNL_UPDATED', {
           matchedQuantity,
-          avgBuyPrice,
-          avgSellPrice,
-          realizedPnL,
-          dailyPnL: this.dailyPnL,
-          totalPnL: this.totalPnL,
+          avgBuyPrice: avgBuyPrice.toFixed(4),
+          avgSellPrice: avgSellPrice.toFixed(4),
+          realizedPnL: realizedPnL.toFixed(2),
+          dailyPnL: this.dailyPnL.toFixed(2),
+          totalPnL: this.totalPnL.toFixed(2),
           buyTrades: buyTrades.length,
-          sellTrades: sellTrades.length
+          sellTrades: sellTrades.length,
+          totalBuyQty: totalBuyQuantity.toFixed(2),
+          totalSellQty: totalSellQuantity.toFixed(2),
+          pnlChange: (realizedPnL - previousPnL).toFixed(2)
+        });
+        
+        logger.info(`💰 P&L Update: $${realizedPnL.toFixed(2)} realized (${buyTrades.length} buys, ${sellTrades.length} sells)`, {
+          dailyPnL: this.dailyPnL.toFixed(2),
+          totalPnL: this.totalPnL.toFixed(2)
         });
       }
     }
@@ -145,8 +153,8 @@ export class RiskManager extends EventEmitter {
       return { isValid: false, reason: 'Maximum open positions reached' };
     }
 
-    // DEBUG: Always log position size calculation for troubleshooting
-    TradingLogger.logRisk('Position size validation', {
+    // Enhanced logging for all validation checks
+    TradingLogger.logRisk('Comprehensive risk validation', {
       requestedSize: positionSize.toFixed(2),
       maxSize: this.config.positionSizePercentage,
       quantity: quantity,
@@ -154,7 +162,20 @@ export class RiskManager extends EventEmitter {
       currentBalance: currentBalance,
       tradeValue: tradeValue.toFixed(2),
       calculation: `(${quantity} × ${price} / ${currentBalance}) × 100 = ${positionSize.toFixed(2)}%`,
-      isValid: positionSize <= this.config.positionSizePercentage
+      dailyPnL: this.dailyPnL,
+      maxDailyLoss: this.config.maxDailyLoss,
+      dailyTradeCount: this.dailyTradeCount,
+      maxDailyTrades: this.maxDailyTrades,
+      openPositions: this.positions.size,
+      maxOpenPositions: this.config.maxOpenPositions,
+      balanceThreshold: (currentBalance * 0.90).toFixed(2),
+      checksStatus: {
+        positionSizeOK: positionSize <= this.config.positionSizePercentage,
+        dailyLossOK: this.dailyPnL > -this.config.maxDailyLoss,
+        tradeCountOK: this.dailyTradeCount < this.maxDailyTrades,
+        positionCountOK: this.positions.size < this.config.maxOpenPositions,
+        balanceOK: tradeValue <= currentBalance * 0.90
+      }
     });
 
     if (positionSize > this.config.positionSizePercentage) {

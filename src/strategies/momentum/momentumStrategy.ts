@@ -678,8 +678,9 @@ export class MomentumStrategy extends EventEmitter {
     // Use the smaller of base size or remaining capacity
     const adjustedPositionValue = Math.min(basePositionValue, remainingCapacity);
     
-    // Ensure minimum order value
-    const minOrderValue = 12;
+    // Dynamic minimum order value based on account size
+    // For accounts < $500: 1% minimum, larger accounts: $12 minimum
+    const minOrderValue = capital < 500 ? capital * 0.01 : 12;
     const finalPositionValue = Math.max(minOrderValue, adjustedPositionValue);
     
     // If we can't even place minimum order, return 0
@@ -690,7 +691,7 @@ export class MomentumStrategy extends EventEmitter {
     
     const quantity = parseFloat((finalPositionValue / price).toFixed(6));
     
-    logger.debug(`Position sizing: Base=$${basePositionValue.toFixed(2)}, Current exposure=$${currentExposure.toFixed(2)}, Adjusted=$${finalPositionValue.toFixed(2)}, Qty=${quantity}`);
+    logger.debug(`Position sizing: Base=$${basePositionValue.toFixed(2)}, Current exposure=$${currentExposure.toFixed(2)}, Adjusted=$${adjustedPositionValue.toFixed(2)}, MinOrder=$${minOrderValue.toFixed(2)}, Final=$${finalPositionValue.toFixed(2)}, Qty=${quantity}`);
     
     return quantity;
   }
