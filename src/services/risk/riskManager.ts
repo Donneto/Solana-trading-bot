@@ -82,10 +82,11 @@ export class RiskManager extends EventEmitter {
       return { isValid: false, reason: 'Daily trade limit reached' };
     }
 
-    if (tradeValue > currentBalance * 0.95) {
+    if (tradeValue > currentBalance * 0.90) {
       TradingLogger.logRisk('Insufficient balance for trade', {
         tradeValue,
-        availableBalance: currentBalance
+        availableBalance: currentBalance,
+        maxAllowed: currentBalance * 0.90
       });
       return { isValid: false, reason: 'Insufficient balance' };
     }

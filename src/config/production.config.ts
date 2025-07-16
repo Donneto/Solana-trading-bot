@@ -20,7 +20,7 @@ export const productionCoinProfiles: Record<string, CoinProfile> = {
   'BTCUSDT': {
     symbol: 'BTCUSDT',
     volatility: 'low',
-    strategy: 'meanReversion',
+    strategy: 'gridTrading',
     meanReversionPeriod: 14,
     deviationThreshold: 1.5,
     stopLossPercentage: 1.5,
@@ -30,12 +30,12 @@ export const productionCoinProfiles: Record<string, CoinProfile> = {
     maxOpenPositions: 2,
     gridLevels: 6,
     gridSpacingPercentage: 1.0,
-    description: 'Production Bitcoin - conservative settings for live trading'
+    description: 'Production Bitcoin - grid trading for low volatility institutional patterns'
   },
   'SOLUSDT': {
     symbol: 'SOLUSDT',
     volatility: 'medium',
-    strategy: 'gridTrading',
+    strategy: 'meanReversion',
     meanReversionPeriod: 20,
     deviationThreshold: 2.0,
     stopLossPercentage: 2.0,
@@ -45,7 +45,7 @@ export const productionCoinProfiles: Record<string, CoinProfile> = {
     maxOpenPositions: 2,
     gridLevels: 8,
     gridSpacingPercentage: 1.2,
-    description: 'Production Solana - grid trading for live trading'
+    description: 'Production Solana - mean reversion for balanced volatility oscillations'
   },
   'ADAUSDT': {
     symbol: 'ADAUSDT',
@@ -56,16 +56,16 @@ export const productionCoinProfiles: Record<string, CoinProfile> = {
     stopLossPercentage: 2.0,
     takeProfitPercentage: 3.5,
     trailingStopPercentage: 1.8,
-    positionSizePercentage: 6,
-    maxOpenPositions: 3,
+    positionSizePercentage: 2.5,
+    maxOpenPositions: 5,
     gridLevels: 6,
     gridSpacingPercentage: 1.5,
-    description: 'Production Cardano - momentum strategy for live trading'
+    description: 'Production Cardano - momentum strategy for high volatility trend movements'
   },
   'XRPUSDT': {
     symbol: 'XRPUSDT',
     volatility: 'high',
-    strategy: 'meanReversion',
+    strategy: 'momentum',
     meanReversionPeriod: 22,
     deviationThreshold: 2.1,
     stopLossPercentage: 1.8,
@@ -75,7 +75,7 @@ export const productionCoinProfiles: Record<string, CoinProfile> = {
     maxOpenPositions: 3,
     gridLevels: 6,
     gridSpacingPercentage: 1.3,
-    description: 'Production XRP - conservative live trading'
+    description: 'Production XRP - momentum strategy for news-driven volatility patterns'
   }
 };
 

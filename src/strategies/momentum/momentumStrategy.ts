@@ -28,10 +28,12 @@ export class MomentumStrategy extends EventEmitter {
   private volumeHistory: number[] = [];
   private emaCache: { [period: number]: number[] } = {};
   private lastSignalTime: number = 0;
-  private signalCooldown: number = 300000; // 5 minute cooldown - prevent overtrading
+  private signalCooldown: number = 45000; // 45 second cooldown for scalping
+  private lastSignalHash: string = '';
   private trendState: TrendState;
   private lastLoggedFearGreedValue: number | null = null;
   private riskManager: any; // Will be injected by TradingEngine
+  private currentBalance: number = 0; // Updated by trading engine
 
   constructor(config: TradingConfig) {
     super();
@@ -46,6 +48,10 @@ export class MomentumStrategy extends EventEmitter {
 
   setRiskManager(riskManager: any): void {
     this.riskManager = riskManager;
+  }
+
+  updateCurrentBalance(balance: number): void {
+    this.currentBalance = balance;
   }
 
   analyzeMarket(marketData: MarketData): TradingSignal | null {
@@ -304,6 +310,12 @@ export class MomentumStrategy extends EventEmitter {
       return null;
     }
 
+    // Create signal hash for deduplication
+    const signalHash = `${indicators.trendStrength}-${Math.round(currentPrice * 1000)}-${Math.round(indicators.macd * 10000)}`;
+    if (this.lastSignalHash === signalHash) {
+      return null; // Skip duplicate signal
+    }
+
     // Calculate conditions
     const bullishCrossover = macd > macdSignal && macdHistogram > 0;
     const bullishTrend = ema12 > ema26;
@@ -319,7 +331,7 @@ export class MomentumStrategy extends EventEmitter {
     const avgVolume = this.volumeHistory.length >= 10 
       ? this.volumeHistory.slice(-10).reduce((sum, vol) => sum + vol, 0) / 10
       : marketData.volume;
-    const volumeConfirmation = marketData.volume > avgVolume * 1.05;
+    const volumeConfirmation = marketData.volume > avgVolume * 1.00;
 
     // Fear & Greed analysis
     const fearGreedBuyConfirmation = this.getFearGreedMomentumConfirmation(marketData.fearGreedIndex, 'BUY');
@@ -352,7 +364,7 @@ export class MomentumStrategy extends EventEmitter {
         description: 'RSI not in extreme territory'
       },
       {
-        name: 'Momentum Strength',
+        name: 'Strong Momentum',
         current: trendStrength,
         required: 'STRONG_UP or WEAK_UP',
         met: strongMomentum,
@@ -362,7 +374,7 @@ export class MomentumStrategy extends EventEmitter {
       {
         name: 'Volume Confirmation',
         current: `${marketData.volume.toFixed(0)} vs ${avgVolume.toFixed(0)} avg`,
-        required: '> 105% of average',
+        required: '> 100% of average',
         met: volumeConfirmation,
         importance: 'MEDIUM' as const,
         description: 'Sufficient volume to support the move'
@@ -434,13 +446,13 @@ export class MomentumStrategy extends EventEmitter {
     let confidence = 0;
 
     // Check BUY conditions
-    const criticalBuyMet = buyConditions.filter(c => c.importance === 'CRITICAL').every(c => c.met);
+    const criticalBuyMet = buyConditions.filter(c => c.importance === 'CRITICAL' as any).every(c => c.met);
     const buyScore = buyConditions.filter(c => c.met).length / buyConditions.length * 100;
     
-    if (criticalBuyMet && buyScore >= 75) {
+    if (criticalBuyMet && buyScore >= 60) {
       confidence = this.calculateMomentumConfidence('BUY', indicators, marketData.fearGreedIndex);
       
-        if (confidence >= 75) {        signal = {
+        if (confidence >= 65) {        signal = {
           action: 'BUY',
           confidence,
           price: currentPrice,
@@ -456,14 +468,13 @@ export class MomentumStrategy extends EventEmitter {
     
     // Check SELL conditions if no BUY signal
     if (!signal) {
-      const criticalSellMet = sellConditions.filter(c => c.importance === 'CRITICAL').every(c => c.met);
+      const criticalSellMet = sellConditions.filter(c => c.importance === 'CRITICAL' as any).every(c => c.met);
       const sellScore = sellConditions.filter(c => c.met).length / sellConditions.length * 100;
       
-      if (criticalSellMet && sellScore >= 75) {
+      if (criticalSellMet && sellScore >= 60) {
         confidence = this.calculateMomentumConfidence('SELL', indicators, marketData.fearGreedIndex);
         
-        if (confidence >= 75) {
-          signal = {
+      if (confidence >= 65) {          signal = {
             action: 'SELL',
             confidence,
             price: currentPrice,
@@ -525,13 +536,14 @@ export class MomentumStrategy extends EventEmitter {
       signalReason: signal?.reason || '',
       confidence: signal?.confidence || 0,
       blockingFactors: signal ? [] : [
-        ...buyConditions.filter(c => !c.met && c.importance === 'CRITICAL').map(c => `BUY: ${c.name}`),
-        ...sellConditions.filter(c => !c.met && c.importance === 'CRITICAL').map(c => `SELL: ${c.name}`)
+        ...buyConditions.filter(c => !c.met && c.importance === 'CRITICAL' as any).map(c => `BUY: ${c.name}`),
+        ...sellConditions.filter(c => !c.met && c.importance === 'CRITICAL' as any).map(c => `SELL: ${c.name}`)
       ]
     });
 
     if (signal) {
       this.lastSignalTime = currentTime;
+      this.lastSignalHash = signalHash;
       logger.info(`🎯 MOMENTUM SIGNAL GENERATED: ${signal.action} at $${currentPrice} (${confidence}% confidence)`);
     }
 
@@ -624,8 +636,9 @@ export class MomentumStrategy extends EventEmitter {
   }
 
   private calculatePositionSize(price: number): number {
-    const baseSize = this.config.positionSizePercentage / 100;
-    const capital = this.config.initialCapital;
+    let baseSize = this.config.positionSizePercentage / 100;
+    // Use real-time balance if available, fallback to initial capital
+    const capital = this.currentBalance > 0 ? this.currentBalance : this.config.initialCapital;
     
     // Get current exposure for this symbol if risk manager is available
     let currentExposure = 0;
@@ -637,8 +650,26 @@ export class MomentumStrategy extends EventEmitter {
       }, 0);
     }
     
-    // Calculate remaining capacity for this symbol (max 20% total exposure per symbol)
-    const maxSymbolExposure = capital * 0.20; // 20% max per symbol
+    // Dynamic sizing based on account equity and exposure
+    const totalExposure = currentExposure;
+    const exposureRatio = totalExposure / capital;
+    
+    // Reduce position size if we already have significant exposure
+    if (exposureRatio > 0.1) { // More than 10% exposure
+      baseSize = baseSize * 0.5; // Cut position size in half
+    }
+    
+    // Further reduce if market volatility is high (based on price movement)
+    if (this.priceHistory.length > 10) {
+      const recentPrices = this.priceHistory.slice(-10);
+      const volatility = this.calculateVolatility(recentPrices);
+      if (volatility > 0.02) { // High volatility (>2%)
+        baseSize = baseSize * 0.7;
+      }
+    }
+    
+    // Calculate remaining capacity for this symbol (max 15% total exposure per symbol)
+    const maxSymbolExposure = capital * 0.15; // 15% max per symbol
     const remainingCapacity = Math.max(0, maxSymbolExposure - currentExposure);
     
     // Calculate base position value
@@ -648,7 +679,7 @@ export class MomentumStrategy extends EventEmitter {
     const adjustedPositionValue = Math.min(basePositionValue, remainingCapacity);
     
     // Ensure minimum order value
-    const minOrderValue = 10;
+    const minOrderValue = 12;
     const finalPositionValue = Math.max(minOrderValue, adjustedPositionValue);
     
     // If we can't even place minimum order, return 0
@@ -662,6 +693,26 @@ export class MomentumStrategy extends EventEmitter {
     logger.debug(`Position sizing: Base=$${basePositionValue.toFixed(2)}, Current exposure=$${currentExposure.toFixed(2)}, Adjusted=$${finalPositionValue.toFixed(2)}, Qty=${quantity}`);
     
     return quantity;
+  }
+
+  private calculateVolatility(prices: number[]): number {
+    if (prices.length < 2) return 0;
+    
+    const returns = [];
+    for (let i = 1; i < prices.length; i++) {
+      const currentPrice = prices[i];
+      const previousPrice = prices[i-1];
+      if (currentPrice && previousPrice && previousPrice !== 0) {
+        returns.push((currentPrice - previousPrice) / previousPrice);
+      }
+    }
+    
+    if (returns.length === 0) return 0;
+    
+    const mean = returns.reduce((sum, ret) => sum + ret, 0) / returns.length;
+    const variance = returns.reduce((sum, ret) => sum + Math.pow(ret - mean, 2), 0) / returns.length;
+    
+    return Math.sqrt(variance);
   }
 
   getStrategyState() {

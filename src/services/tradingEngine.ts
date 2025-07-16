@@ -19,6 +19,12 @@ export class TradingEngine extends EventEmitter {
   private lastMarketData: MarketData | null = null;
   private openOrderIds: Set<string> = new Set();
   private emergencyStop: boolean = false;
+  private signalStats = {
+    total: 0,
+    executed: 0,
+    rejected: 0,
+    lastReset: Date.now()
+  };
 
   constructor(
     binanceService: BinanceService,
@@ -79,6 +85,11 @@ export class TradingEngine extends EventEmitter {
       // Inject risk manager into strategy for position-aware calculations
       if (this.strategy && 'setRiskManager' in this.strategy) {
         (this.strategy as any).setRiskManager(this.riskManager);
+      }
+
+      // Update strategy with current balance
+      if (this.strategy && 'updateCurrentBalance' in this.strategy) {
+        (this.strategy as any).updateCurrentBalance(this.currentBalance);
       }
 
       // Set up strategy event listeners
@@ -236,6 +247,15 @@ export class TradingEngine extends EventEmitter {
       // Only process BUY and SELL signals, skip HOLD
       if (signal.action === 'HOLD') return;
 
+      this.signalStats.total++;
+      this.logExecutionStats();
+
+      logger.info(`🔄 Processing ${signal.action} signal: ${signal.quantity} @ $${signal.price} (${signal.confidence}% confidence)`);
+
+      // Fetch real-time balance before validation
+      await this.updateBalance();
+      logger.debug('Real-time balance fetched', { currentBalance: this.currentBalance });
+
       // Validate trade with risk manager
       const validation = this.riskManager.validateTrade(
         signal.action as 'BUY' | 'SELL',
@@ -245,14 +265,22 @@ export class TradingEngine extends EventEmitter {
       );
 
       if (!validation.isValid) {
-        logger.warn('Trade signal rejected by risk manager', {
+        this.signalStats.rejected++;
+        logger.warn('🚫 Trade signal rejected by risk manager', {
           reason: validation.reason,
           action: signal.action,
           quantity: signal.quantity,
-          price: signal.price
+          price: signal.price,
+          currentBalance: this.currentBalance,
+          tradeValue: (signal.quantity * signal.price).toFixed(2),
+          positionSizePercentage: ((signal.quantity * signal.price / this.currentBalance) * 100).toFixed(2) + '%',
+          executionRate: `${this.signalStats.executed}/${this.signalStats.total} (${((this.signalStats.executed / this.signalStats.total) * 100).toFixed(1)}%)`
         });
         return;
       }
+
+      logger.info(`✅ Risk validation passed, executing trade...`);
+      this.signalStats.executed++;
 
       // Execute the trade
       await this.executeTrade(signal);
@@ -265,6 +293,37 @@ export class TradingEngine extends EventEmitter {
     }
   }
 
+  private logExecutionStats(): void {
+    const timeSinceReset = Date.now() - this.signalStats.lastReset;
+    const hoursSinceReset = timeSinceReset / (1000 * 60 * 60);
+    
+    // Log stats every 100 signals or every 4 hours
+    if (this.signalStats.total % 100 === 0 || hoursSinceReset >= 4) {
+      const executionRate = this.signalStats.total > 0 ? (this.signalStats.executed / this.signalStats.total) * 100 : 0;
+      const rejectionRate = this.signalStats.total > 0 ? (this.signalStats.rejected / this.signalStats.total) * 100 : 0;
+      
+      logger.info(`📊 Execution Statistics:`, {
+        totalSignals: this.signalStats.total,
+        executed: this.signalStats.executed,
+        rejected: this.signalStats.rejected,
+        executionRate: `${executionRate.toFixed(1)}%`,
+        rejectionRate: `${rejectionRate.toFixed(1)}%`,
+        timePeriod: `${hoursSinceReset.toFixed(1)} hours`
+      });
+      
+      // Reset stats if it's been more than 12 hours
+      if (hoursSinceReset >= 12) {
+        this.signalStats = {
+          total: 0,
+          executed: 0,
+          rejected: 0,
+          lastReset: Date.now()
+        };
+        logger.info('📊 Execution statistics reset');
+      }
+    }
+  }
+
   private async executeTrade(signal: TradingSignal): Promise<void> {
     try {
       // Only execute BUY and SELL signals
@@ -274,11 +333,12 @@ export class TradingEngine extends EventEmitter {
       const currentBalance = await this.binanceService.getAccountBalance('USDT');
       const positionValue = signal.quantity * signal.price;
       
-      // Safety check: ensure we have sufficient balance
-      if (positionValue > currentBalance * 0.95) {
-        logger.warn('Insufficient balance for trade', {
+      // Safety check: ensure we have sufficient balance with larger buffer
+      if (positionValue > currentBalance * 0.85) {
+        logger.warn('Insufficient balance for trade - too large position', {
           positionValue,
           currentBalance,
+          maxAllowed: currentBalance * 0.85,
           signal: signal.action
         });
         return;
@@ -546,6 +606,11 @@ export class TradingEngine extends EventEmitter {
   async updateBalance(): Promise<void> {
     try {
       this.currentBalance = await this.binanceService.getAccountBalance('USDT');
+      
+      // Also update strategy with new balance
+      if (this.strategy && 'updateCurrentBalance' in this.strategy) {
+        (this.strategy as any).updateCurrentBalance(this.currentBalance);
+      }
     } catch (error) {
       TradingLogger.logError(error as Error, { context: 'TradingEngine.updateBalance' });
     }
